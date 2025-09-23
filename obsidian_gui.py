@@ -23,6 +23,11 @@ class ImageHandler(FileSystemEventHandler):
         # Setup logging
         self.logger = logging.getLogger(__name__)
         
+    def update_options(self, new_options):
+        """Update options dynamically without restarting"""
+        self.options.update(new_options)
+        self.cooldown_seconds = self.options.get('cooldown', 2.0)
+        
     def log(self, message, level="INFO"):
         """Custom log method that sends to GUI"""
         if self.log_callback:
@@ -201,50 +206,65 @@ class ImageHandler(FileSystemEventHandler):
         
         return commands
 
+    def get_effective_prefix(self, content, note_commands=None):
+        """Get the effective prefix considering override, note commands, and auto-detection"""
+        # Priority 1: Override prefix (highest priority)
+        override_prefix = self.options.get('override_prefix', '').strip()
+        if override_prefix:
+            self.log(f"Using override prefix: {override_prefix}", "INFO")
+            return override_prefix
+        
+        # Priority 2: Note command prefix
+        if note_commands and 'prefix' in note_commands:
+            self.log(f"Using note command prefix: {note_commands['prefix']}", "INFO")
+            return note_commands['prefix']
+        
+        # Priority 3: Auto-detected prefix (if auto-numbering is enabled)
+        if self.options.get('auto_numbering', True) or (note_commands and note_commands.get('numbering')):
+            # Pattern to match [[File:Prefix_Number.Extension]] with optional captions and formatting
+            pattern = r'\[\[File:([^_]+)_(\d+)\.[^|\]]+(?:\|[^\]]+)?\]\]'
+            matches = re.findall(pattern, content)
+            
+            if matches:
+                # Count occurrences of each prefix
+                prefix_counts = {}
+                for prefix, number in matches:
+                    prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
+                
+                # Use the most common prefix
+                most_common_prefix = max(prefix_counts.keys(), key=lambda x: prefix_counts[x])
+                self.log(f"Auto-detected prefix: {most_common_prefix}", "INFO")
+                return most_common_prefix
+        
+        # Priority 4: Default prefix (lowest priority)
+        self.log(f"Using default prefix: {self.default_prefix}", "INFO")
+        return self.default_prefix
+
     def extract_prefix_and_highest_number(self, content, note_commands=None):
         """Extract prefix and find highest number from existing image codes"""
+        # Get the effective prefix
+        effective_prefix = self.get_effective_prefix(content, note_commands)
+        
+        # If numbering is disabled, return prefix with number 0
         if not self.options.get('auto_numbering', True) and not (note_commands and note_commands.get('numbering')):
-            # Check for temporary prefix override
-            prefix = note_commands.get('prefix', self.default_prefix) if note_commands else self.default_prefix
-            return prefix, 0
-            
-        # Use prefix from note commands if available
-        target_prefix = note_commands.get('prefix', self.default_prefix) if note_commands else self.default_prefix
+            return effective_prefix, 0
         
         # Pattern to match [[File:Prefix_Number.Extension]] with optional captions and formatting
         pattern = r'\[\[File:([^_]+)_(\d+)\.[^|\]]+(?:\|[^\]]+)?\]\]'
         matches = re.findall(pattern, content)
         
         if not matches:
-            return target_prefix, 0
+            return effective_prefix, 0
         
-        # If we have a specific prefix from commands, only look for that prefix
-        if note_commands and 'prefix' in note_commands:
-            target_numbers = []
-            for prefix, number in matches:
-                if prefix == target_prefix:
-                    target_numbers.append(int(number))
-            
-            highest_number = max(target_numbers) if target_numbers else 0
-            self.log(f"Using command prefix: {target_prefix}, highest number: {highest_number}", "INFO")
-            return target_prefix, highest_number
-        
-        # Original logic for automatic prefix detection
-        prefix_counts = {}
-        prefix_numbers = {}
-        
+        # Find the highest number for the effective prefix
+        prefix_numbers = []
         for prefix, number in matches:
-            prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
-            if prefix not in prefix_numbers:
-                prefix_numbers[prefix] = []
-            prefix_numbers[prefix].append(int(number))
+            if prefix == effective_prefix:
+                prefix_numbers.append(int(number))
         
-        # Use the most common prefix
-        most_common_prefix = max(prefix_counts.keys(), key=lambda x: prefix_counts[x])
-        highest_number = max(prefix_numbers[most_common_prefix]) if prefix_numbers[most_common_prefix] else 0
-        
-        self.log(f"Extracted prefix: {most_common_prefix}, highest number: {highest_number}", "INFO")
-        return most_common_prefix, highest_number
+        highest_number = max(prefix_numbers) if prefix_numbers else 0
+        self.log(f"Using prefix: {effective_prefix}, highest number: {highest_number}", "INFO")
+        return effective_prefix, highest_number
     
     def process_image(self, original_path):
         """Main processing function"""
@@ -271,7 +291,7 @@ class ImageHandler(FileSystemEventHandler):
         # Convert to JPG if enabled (considering note commands)
         processed_path = self.convert_to_jpg(original_path, note_commands)
         
-        # Extract prefix and highest number (considering note commands)
+        # Extract prefix and highest number (considering note commands and override)
         prefix, highest_number = self.extract_prefix_and_highest_number(content, note_commands)
         
         # Check if renaming is enabled (globally or by note command)
@@ -377,6 +397,7 @@ class ImageProcessorGUI:
             'vault_path': tk.StringVar(),
             'images_folder': tk.StringVar(),
             'default_prefix': tk.StringVar(value="Game"),
+            'override_prefix': tk.StringVar(value=""),  # NEW: Override prefix
             'convert_jpg': tk.BooleanVar(value=True),
             'jpg_quality': tk.IntVar(value=95),
             'optimize_jpg': tk.BooleanVar(value=True),
@@ -407,10 +428,26 @@ class ImageProcessorGUI:
         }
         
         self.observer = None
+        self.handler = None  # Keep reference to handler
         self.is_running = False
         
         self.setup_ui()
         self.load_settings()
+        
+        # Bind override prefix changes to update handler dynamically
+        self.settings['override_prefix'].trace('w', self.on_override_prefix_change)
+        
+    def on_override_prefix_change(self, *args):
+        """Called when override prefix changes - updates handler in real-time"""
+        if self.handler and self.is_running:
+            new_options = {key: var.get() for key, var in self.settings.items()}
+            self.handler.update_options(new_options)
+            
+            override_value = self.settings['override_prefix'].get().strip()
+            if override_value:
+                self.log_message(f"Override prefix updated to: '{override_value}'", "INFO")
+            else:
+                self.log_message("Override prefix cleared", "INFO")
         
     def setup_ui(self):
         # Create notebook for tabs
@@ -471,15 +508,29 @@ class ImageProcessorGUI:
         ttk.Entry(vault_frame, textvariable=self.settings['images_folder'], width=50).grid(row=1, column=1, padx=5, pady=5)
         ttk.Button(vault_frame, text="Browse", command=lambda: self.browse_folder('images_folder')).grid(row=1, column=2, padx=5, pady=5)
         
+        # Prefix Settings Frame
+        prefix_frame = ttk.LabelFrame(parent, text="Prefix Settings")
+        prefix_frame.pack(fill="x", padx=10, pady=10)
+        
+        # Override prefix (highest priority)
+        ttk.Label(prefix_frame, text="Override Prefix:", anchor="w", font=("Arial", 9, "bold")).grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        override_entry = ttk.Entry(prefix_frame, textvariable=self.settings['override_prefix'], width=40, font=("Arial", 9))
+        override_entry.grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        ttk.Label(prefix_frame, text="(Overrides all other prefixes when not empty)", 
+                 font=("Arial", 8), foreground="red").grid(row=0, column=2, padx=5, pady=5)
+        
+        # Default prefix
+        ttk.Label(prefix_frame, text="Default Prefix:", anchor="w").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        ttk.Entry(prefix_frame, textvariable=self.settings['default_prefix'], width=40).grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        ttk.Label(prefix_frame, text="(Used when no override or note commands)", 
+                 font=("Arial", 8), foreground="gray").grid(row=1, column=2, padx=5, pady=5)
+        
         # Basic Settings
         basic_frame = ttk.LabelFrame(parent, text="Basic Settings")
         basic_frame.pack(fill="x", padx=10, pady=10)
         
-        ttk.Label(basic_frame, text="Default Prefix:", anchor="w").grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        ttk.Entry(basic_frame, textvariable=self.settings['default_prefix'], width=40).grid(row=0, column=1, sticky="w", padx=5, pady=5)
-        
-        ttk.Label(basic_frame, text="Cooldown (seconds):").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        ttk.Spinbox(basic_frame, from_=0.1, to=10.0, increment=0.1, textvariable=self.settings['cooldown'], width=10).grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        ttk.Label(basic_frame, text="Cooldown (seconds):").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        ttk.Spinbox(basic_frame, from_=0.1, to=10.0, increment=0.1, textvariable=self.settings['cooldown'], width=10).grid(row=0, column=1, sticky="w", padx=5, pady=5)
         
         # Processing Options
         process_frame = ttk.LabelFrame(parent, text="Processing Options")
@@ -551,13 +602,28 @@ class ImageProcessorGUI:
         ttk.Checkbutton(enable_frame, text="Enable note commands", variable=self.settings['enable_note_commands'], 
                        command=self.toggle_note_commands).pack(anchor="w", padx=5, pady=5)
         
+        # Prefix Priority Information
+        priority_frame = ttk.LabelFrame(parent, text="Prefix Priority Order")
+        priority_frame.pack(fill="x", padx=10, pady=10)
+        
+        priority_text = """Priority (highest to lowest):
+1. Override Prefix (from Main Settings tab) - Always wins when not empty
+2. Note Command Prefix ($prefix=) - From note content
+3. Auto-detected Prefix - Most common prefix found in existing image codes
+4. Default Prefix - Fallback option"""
+        
+        priority_label = tk.Text(priority_frame, height=6, width=70, font=("Arial", 9))
+        priority_label.insert("1.0", priority_text)
+        priority_label.config(state="disabled", background="#f0f0f0", relief="flat", borderwidth=0)
+        priority_label.pack(padx=10, pady=10)
+        
         # Individual Commands
         commands_frame = ttk.LabelFrame(parent, text="Available Commands (when enabled in notes)")
         commands_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
         # Create a grid of checkboxes for each command
         commands_info = [
-            ('$prefix=', 'Set custom prefix', 'prefix'),
+            ('$prefix=', 'Set custom prefix (overridden by Override Prefix)', 'prefix'),
             ('$quality=', 'Set JPG quality (1-100)', 'quality'),
             ('$format=', 'Set custom image format', 'format'),
             ('$separator=', 'Set custom separator', 'separator'),
@@ -586,9 +652,11 @@ $quality=85
 $format=![[{filename}]]
 $separator=---
 $convert=true
-$rename=false"""
+$rename=false
+
+Note: Override Prefix will ignore the $prefix= command above."""
         
-        example_label = tk.Text(example_frame, height=6, width=50, font=("Courier", 9))
+        example_label = tk.Text(example_frame, height=8, width=50, font=("Courier", 9))
         example_label.insert("1.0", example_text)
         example_label.config(state="disabled", background="#f0f0f0")
         example_label.pack(padx=10, pady=10)
@@ -662,6 +730,11 @@ $rename=false"""
             self.status_label.config(text="Status: Running", foreground="green")
             self.log_message("Started monitoring " + images_folder)
             
+            # Log the current override prefix status
+            override_value = self.settings['override_prefix'].get().strip()
+            if override_value:
+                self.log_message(f"Override prefix is active: '{override_value}'", "INFO")
+            
         except Exception as e:
             messagebox.showerror("Error", f"Failed to start monitoring: {str(e)}")
             self.log_message(f"Error: {str(e)}", "ERROR")
@@ -672,6 +745,7 @@ $rename=false"""
             self.observer.join()
             self.observer = None
             
+        self.handler = None
         self.is_running = False
         self.start_button.config(text="Start Monitoring")
         self.status_label.config(text="Status: Stopped", foreground="red")
