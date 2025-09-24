@@ -8,13 +8,19 @@ from watchdog.observers import Observer
 from image_handler import ImageHandler
 from settings_manager import SettingsManager
 from gui_tabs import MainSettingsTab, ImageProcessingTab, NoteProcessingTab, NoteCommandsTab
+from theme_manager import ModernThemeManager
 
 
 class ImageProcessorGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Obsidian Image Processor")
-        self.root.geometry("1200x900")
+        self.root.geometry("1300x950")
+        self.root.minsize(1200, 800)
+        
+        # Initialize theme
+        self.theme = ModernThemeManager()
+        self.theme.apply_modern_theme(root)
         
         # Initialize settings
         self.settings = self._create_settings_variables()
@@ -70,58 +76,121 @@ class ImageProcessorGUI:
                 self.log_message("Override prefix cleared", "INFO")
         
     def setup_ui(self):
-        # Create notebook for tabs
-        notebook = ttk.Notebook(self.root)
-        notebook.pack(fill="both", expand=False, padx=5, pady=5)
+        # Main container with padding
+        main_container = tk.Frame(self.root, bg=self.theme.colors['bg_secondary'])
+        main_container.pack(fill="both", expand=True, padx=15, pady=15)
+      
+        
+        # Create notebook for tabs with modern styling
+        notebook = ttk.Notebook(main_container, style='Modern.TNotebook')
+        notebook.pack(fill="both", expand=True, pady=(10, 0))
         
         # Main Settings Tab
-        main_tab = ttk.Frame(notebook)
-        notebook.add(main_tab, text="Main Settings")
-        MainSettingsTab(main_tab, self.settings)
+        main_tab = tk.Frame(notebook, bg=self.theme.colors['bg_primary'])
+        notebook.add(main_tab, text="🏠 Main Settings")
+        MainSettingsTab(main_tab, self.settings, self.theme)
         
         # Image Processing Tab
-        image_tab = ttk.Frame(notebook)
-        notebook.add(image_tab, text="Image Processing")
-        ImageProcessingTab(image_tab, self.settings)
+        image_tab = tk.Frame(notebook, bg=self.theme.colors['bg_primary'])
+        notebook.add(image_tab, text="🖼️ Image Processing")
+        ImageProcessingTab(image_tab, self.settings, self.theme)
         
         # Note Processing Tab
-        note_tab = ttk.Frame(notebook)
-        notebook.add(note_tab, text="Note Processing")
-        NoteProcessingTab(note_tab, self.settings)
+        note_tab = tk.Frame(notebook, bg=self.theme.colors['bg_primary'])
+        notebook.add(note_tab, text="📝 Note Processing")
+        NoteProcessingTab(note_tab, self.settings, self.theme)
         
         # Note Commands Tab
-        commands_tab = ttk.Frame(notebook)
-        notebook.add(commands_tab, text="Note Commands")
-        NoteCommandsTab(commands_tab, self.settings, self.note_commands, self.log_message)
+        commands_tab = tk.Frame(notebook, bg=self.theme.colors['bg_primary'])
+        notebook.add(commands_tab, text="⚡ Commands")
+        NoteCommandsTab(commands_tab, self.settings, self.note_commands, self.log_message, self.theme)
         
         # Control Panel at bottom
-        self.setup_control_panel()
+        self.setup_control_panel(main_container)
         
         # Log Output
-        self.setup_log_output()
+        self.setup_log_output(main_container)
         
-    def setup_control_panel(self):
-        """Setup the control panel with buttons and status"""
-        control_frame = ttk.Frame(self.root)
-        control_frame.pack(fill="x", padx=5, pady=5)
+    def setup_control_panel(self, parent):
+        """Setup the modern control panel with buttons and status"""
+        control_card = self.theme.create_card_frame(parent)
+        control_card.pack(fill="x", pady=(15, 0))
         
-        self.start_button = ttk.Button(control_frame, text="Start Monitoring", command=self.toggle_monitoring)
-        self.start_button.pack(side="left", padx=5)
+        # Control content frame
+        control_content = tk.Frame(control_card, bg=self.theme.colors['bg_primary'])
+        control_content.pack(fill="x", padx=10, pady=8)
         
-        ttk.Button(control_frame, text="Save Settings", command=self.save_settings).pack(side="left", padx=5)
-        ttk.Button(control_frame, text="Load Settings", command=self.load_settings).pack(side="left", padx=5)
-        ttk.Button(control_frame, text="Clear Log", command=self.clear_log).pack(side="left", padx=5)
+        # Left side - buttons
+        button_frame = tk.Frame(control_content, bg=self.theme.colors['bg_primary'])
+        button_frame.pack(side="left", fill="x", expand=True)
         
-        self.status_label = ttk.Label(control_frame, text="Status: Stopped", foreground="red")
-        self.status_label.pack(side="right", padx=5)
+        self.start_button = ttk.Button(
+            button_frame, 
+            text="🚀 Start Monitoring", 
+            command=self.toggle_monitoring,
+            style='Primary.TButton'
+        )
+        self.start_button.pack(side="left", padx=(0, 6))
+        
+        ttk.Button(
+            button_frame, 
+            text="💾 Save Settings", 
+            command=self.save_settings,
+            style='Modern.TButton'
+        ).pack(side="left", padx=3)
+        
+        ttk.Button(
+            button_frame, 
+            text="📁 Load Settings", 
+            command=self.load_settings,
+            style='Modern.TButton'
+        ).pack(side="left", padx=3)
+        
+        ttk.Button(
+            button_frame, 
+            text="🧹 Clear Log", 
+            command=self.clear_log,
+            style='Modern.TButton'
+        ).pack(side="left", padx=3)
+        
+        # Right side - status
+        status_frame = tk.Frame(control_content, bg=self.theme.colors['bg_primary'])
+        status_frame.pack(side="right")
+        
+        self.status_badge = self.theme.create_status_badge(status_frame, "⏹️ Stopped", "danger")
+        self.status_badge.pack()
     
-    def setup_log_output(self):
-        """Setup the log output area"""
-        log_frame = ttk.LabelFrame(self.root, text="Log Output")
-        log_frame.pack(fill="both", expand=True, padx=5, pady=5)
+    def setup_log_output(self, parent):
+        """Setup the modern log output area"""
+        log_card = self.theme.create_card_frame(parent, "📋 Activity Log")
+        log_card.config(height=250)
+        log_card.pack_propagate(False)
+        log_card.pack(fill="x", expand=False, pady=(15, 0))
         
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=20, wrap=tk.WORD)
-        self.log_text.pack(fill="both", expand=True, padx=5, pady=5)
+        # Log content
+        log_content = tk.Frame(log_card, bg=self.theme.colors['bg_primary'])
+        log_content.pack(fill="both", expand=True, padx=20, pady=(10, 20))
+        
+        # Create custom styled text widget
+        self.log_text = tk.Text(
+            log_content, 
+            wrap=tk.WORD,
+            bg='#fafafa',
+            fg=self.theme.colors['text_primary'],
+            font=('Consolas', 10),
+            relief='solid',
+            bd=1,
+            padx=10,
+            pady=10
+        )
+        
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(log_content, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=scrollbar.set)
+        
+        # Pack with scrollbar
+        scrollbar.pack(side="right", fill="y")
+        self.log_text.pack(side="left", fill="both", expand=True)
             
     def toggle_monitoring(self):
         """Toggle between start and stop monitoring"""
@@ -172,9 +241,13 @@ class ImageProcessorGUI:
             self.observer.start()
             
             self.is_running = True
-            self.start_button.config(text="Stop Monitoring")
-            self.status_label.config(text="Status: Running", foreground="green")
-            self.log_message("Started monitoring " + images_folder)
+            self.start_button.config(text="⏹️ Stop Monitoring", style='Danger.TButton')
+            self.status_badge.destroy()
+            self.status_badge = self.theme.create_status_badge(
+                self.status_badge.master, "▶️ Running", "success"
+            )
+            self.status_badge.pack()
+            self.log_message("🚀 Started monitoring " + images_folder)
             
             # Log the current override prefix status
             override_value = self.settings['override_prefix'].get().strip()
@@ -194,15 +267,39 @@ class ImageProcessorGUI:
             
         self.handler = None
         self.is_running = False
-        self.start_button.config(text="Start Monitoring")
-        self.status_label.config(text="Status: Stopped", foreground="red")
-        self.log_message("Stopped monitoring")
+        self.start_button.config(text="🚀 Start Monitoring", style='Primary.TButton')
+        self.status_badge.destroy()
+        self.status_badge = self.theme.create_status_badge(
+            self.status_badge.master, "⏹️ Stopped", "danger"
+        )
+        self.status_badge.pack()
+        self.log_message("⏹️ Stopped monitoring")
         
     def log_message(self, message, level="INFO"):
-        """Add a message to the log output"""
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        log_entry = f"[{timestamp}] {message}\n"
-        self.log_text.insert(tk.END, log_entry)
+        """Add a message to the log output with modern formatting"""
+        timestamp = time.strftime("%H:%M:%S")
+        
+        # Color code by level
+        level_colors = {
+            "INFO": "#2563eb",
+            "WARNING": "#f59e0b", 
+            "ERROR": "#ef4444",
+            "SUCCESS": "#10b981"
+        }
+        
+        # Icons by level
+        level_icons = {
+            "INFO": "ℹ️",
+            "WARNING": "⚠️",
+            "ERROR": "❌",
+            "SUCCESS": "✅"
+        }
+        
+        icon = level_icons.get(level, "•")
+        color = level_colors.get(level, "#64748b")
+        
+        # Insert with formatting
+        self.log_text.insert(tk.END, f"[{timestamp}] {icon} {message}\n")
         self.log_text.see(tk.END)
         
     def clear_log(self):

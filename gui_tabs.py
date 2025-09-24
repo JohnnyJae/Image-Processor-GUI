@@ -3,54 +3,164 @@ from tkinter import ttk, filedialog
 
 
 class MainSettingsTab:
-    def __init__(self, parent, settings):
+    def __init__(self, parent, settings, theme):
         self.settings = settings
+        self.theme = theme
         self.setup_ui(parent)
     
     def setup_ui(self, parent):
-        # Vault Path
-        vault_frame = ttk.LabelFrame(parent, text="Paths Configuration")
-        vault_frame.pack(fill="x", padx=10, pady=10)
+        # Main scroll frame
+        canvas = tk.Canvas(parent, bg=self.theme.colors['bg_primary'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.theme.colors['bg_primary'])
         
-        ttk.Label(vault_frame, text="Obsidian Vault Path:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        ttk.Entry(vault_frame, textvariable=self.settings['vault_path'], width=50).grid(row=0, column=1, padx=5, pady=5)
-        ttk.Button(vault_frame, text="Browse", command=lambda: self.browse_folder('vault_path')).grid(row=0, column=2, padx=5, pady=5)
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
         
-        ttk.Label(vault_frame, text="Images Folder:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        ttk.Entry(vault_frame, textvariable=self.settings['images_folder'], width=50).grid(row=1, column=1, padx=5, pady=5)
-        ttk.Button(vault_frame, text="Browse", command=lambda: self.browse_folder('images_folder')).grid(row=1, column=2, padx=5, pady=5)
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        window_id = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        # Ensure the inner frame always matches the canvas width so grid columns fill correctly
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(window_id, width=e.width))
+        canvas.configure(yscrollcommand=scrollbar.set)
         
-        # Prefix Settings Frame
-        prefix_frame = ttk.LabelFrame(parent, text="Prefix Settings")
-        prefix_frame.pack(fill="x", padx=10, pady=10)
+        # Horizontal container for paths and prefix settings
+        horizontal_container = tk.Frame(scrollable_frame, bg=self.theme.colors['bg_primary'])
+        horizontal_container.pack(fill="x", padx=5, pady=(6, 3))
+        horizontal_container.grid_columnconfigure(0, weight=1, uniform="group1")
+        horizontal_container.grid_columnconfigure(1, weight=1, uniform="group1")
         
-        # Override prefix (highest priority)
-        ttk.Label(prefix_frame, text="Override Prefix:", anchor="w", font=("Arial", 9, "bold")).grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        override_entry = ttk.Entry(prefix_frame, textvariable=self.settings['override_prefix'], width=40, font=("Arial", 9))
-        override_entry.grid(row=0, column=1, sticky="w", padx=5, pady=5)
-        ttk.Label(prefix_frame, text="(Overrides all other prefixes when not empty)", 
-                 font=("Arial", 8), foreground="red").grid(row=0, column=2, padx=5, pady=5)
+        # Vault Path Card
+        paths_card = self.theme.create_card_frame(horizontal_container, "🗂️ Paths Configuration")
+        paths_card.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        
+        paths_content = tk.Frame(paths_card, bg=self.theme.colors['bg_primary'])
+        paths_content.pack(fill="x", padx=10, pady=(3, 6))
+        
+        # Vault path row
+        vault_row = tk.Frame(paths_content, bg=self.theme.colors['bg_primary'])
+        vault_row.pack(fill="x", pady=(0, 15))
+        
+        tk.Label(vault_row, text="Obsidian Vault Path:", 
+                bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_primary'],
+                font=('Segoe UI', 10, 'bold')).pack(anchor="w", pady=(0, 5))
+        
+        vault_input_frame = tk.Frame(vault_row, bg=self.theme.colors['bg_primary'])
+        vault_input_frame.pack(fill="x")
+        
+        vault_entry = ttk.Entry(vault_input_frame, textvariable=self.settings['vault_path'], 
+                               font=('Segoe UI', 10), style='Modern.TEntry')
+        vault_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        ttk.Button(vault_input_frame, text="📁 Browse", 
+                  command=lambda: self.browse_folder('vault_path'),
+                  style='Modern.TButton').pack(side="right")
+        
+        # Images folder row
+        images_row = tk.Frame(paths_content, bg=self.theme.colors['bg_primary'])
+        images_row.pack(fill="x")
+        
+        tk.Label(images_row, text="Images Folder:", 
+                bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_primary'],
+                font=('Segoe UI', 10, 'bold')).pack(anchor="w", pady=(0, 5))
+        
+        images_input_frame = tk.Frame(images_row, bg=self.theme.colors['bg_primary'])
+        images_input_frame.pack(fill="x")
+        
+        images_entry = ttk.Entry(images_input_frame, textvariable=self.settings['images_folder'],
+                                font=('Segoe UI', 10), style='Modern.TEntry')
+        images_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        ttk.Button(images_input_frame, text="📁 Browse",
+                  command=lambda: self.browse_folder('images_folder'),
+                  style='Modern.TButton').pack(side="right")
+        
+        # Prefix Settings Card
+        prefix_card = self.theme.create_card_frame(horizontal_container, "🏷️ Prefix Settings")
+        prefix_card.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        
+        prefix_content = tk.Frame(prefix_card, bg=self.theme.colors['bg_primary'])
+        prefix_content.pack(fill="x", padx=15, pady=(5, 10))
+        
+        # Override prefix (with highlight)
+        override_frame = tk.Frame(prefix_content, bg='#fef3c7', relief='solid', bd=1)
+        override_frame.pack(fill="x", pady=(0, 15))
+        
+        override_inner = tk.Frame(override_frame, bg='#fef3c7')
+        override_inner.pack(fill="x", padx=15, pady=15)
+        
+        tk.Label(override_inner, text="🎯 Override Prefix (Highest Priority):", 
+                bg='#fef3c7', fg='#92400e',
+                font=('Segoe UI', 10, 'bold')).pack(anchor="w", pady=(0, 8))
+        
+        override_entry = ttk.Entry(override_inner, textvariable=self.settings['override_prefix'], 
+                                  font=('Segoe UI', 11), style='Modern.TEntry')
+        override_entry.pack(fill="x", pady=(0, 5))
+        
+        tk.Label(override_inner, text="⚠️ When set, this prefix overrides all other prefix sources",
+                bg='#fef3c7', fg='#92400e',
+                font=('Segoe UI', 9)).pack(anchor="w")
         
         # Default prefix
-        ttk.Label(prefix_frame, text="Default Prefix:", anchor="w").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        ttk.Entry(prefix_frame, textvariable=self.settings['default_prefix'], width=40).grid(row=1, column=1, sticky="w", padx=5, pady=5)
-        ttk.Label(prefix_frame, text="(Used when no override or note commands)", 
-                 font=("Arial", 8), foreground="gray").grid(row=1, column=2, padx=5, pady=5)
+        default_row = tk.Frame(prefix_content, bg=self.theme.colors['bg_primary'])
+        default_row.pack(fill="x")
         
-        # Basic Settings
-        basic_frame = ttk.LabelFrame(parent, text="Basic Settings")
-        basic_frame.pack(fill="x", padx=10, pady=10)
+        tk.Label(default_row, text="Default Prefix:", 
+                bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_primary'],
+                font=('Segoe UI', 10, 'bold')).pack(anchor="w", pady=(0, 5))
         
-        ttk.Label(basic_frame, text="Cooldown (seconds):").grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        ttk.Spinbox(basic_frame, from_=0.1, to=10.0, increment=0.1, textvariable=self.settings['cooldown'], width=10).grid(row=0, column=1, sticky="w", padx=5, pady=5)
+        ttk.Entry(default_row, textvariable=self.settings['default_prefix'],
+                 font=('Segoe UI', 10), style='Modern.TEntry').pack(fill="x", pady=(0, 5))
         
-        # Processing Options
-        process_frame = ttk.LabelFrame(parent, text="Processing Options")
-        process_frame.pack(fill="x", padx=10, pady=10)
+        tk.Label(default_row, text="Used as fallback when no override or note commands are present",
+                bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_secondary'],
+                font=('Segoe UI', 9)).pack(anchor="w")
         
-        ttk.Checkbutton(process_frame, text="Add image code to note", variable=self.settings['add_to_note']).pack(anchor="w", padx=5, pady=2)
-        ttk.Checkbutton(process_frame, text="Auto-rename files", variable=self.settings['auto_rename']).pack(anchor="w", padx=5, pady=2)
-        ttk.Checkbutton(process_frame, text="Auto-numbering", variable=self.settings['auto_numbering']).pack(anchor="w", padx=5, pady=2)
+        # Horizontal container for basic and processing options
+        options_container = tk.Frame(scrollable_frame, bg=self.theme.colors['bg_primary'])
+        options_container.pack(fill="x", padx=5, pady=10)
+        options_container.grid_columnconfigure(0, weight=1, uniform="group2")
+        options_container.grid_columnconfigure(1, weight=1, uniform="group2")
+        
+        # Basic Settings Card
+        basic_card = self.theme.create_card_frame(options_container, "⚙️ Basic Settings")
+        basic_card.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+        
+        basic_content = tk.Frame(basic_card, bg=self.theme.colors['bg_primary'])
+        basic_content.pack(fill="x", padx=5, pady=(3, 6))
+        
+        cooldown_row = tk.Frame(basic_content, bg=self.theme.colors['bg_primary'])
+        cooldown_row.pack(fill="x", pady=(0, 5))
+        
+        tk.Label(cooldown_row, text="⏱️ Processing Cooldown (seconds):", 
+                bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_primary'],
+                font=('Segoe UI', 10, 'bold')).pack(anchor="w", pady=(0, 5))
+        
+        ttk.Spinbox(cooldown_row, from_=0.1, to=10.0, increment=0.1, 
+                   textvariable=self.settings['cooldown'], width=5,
+                   font=('Segoe UI', 10)).pack(anchor="w")
+        
+        # Processing Options Card
+        options_card = self.theme.create_card_frame(options_container, "🔄 Processing Options")
+        options_card.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+        
+        options_content = tk.Frame(options_card, bg=self.theme.colors['bg_primary'])
+        options_content.pack(fill="x", padx=15, pady=(5, 10))
+        
+        ttk.Checkbutton(options_content, text="📝 Add image code to note", 
+                       variable=self.settings['add_to_note'],
+                       style='Modern.TCheckbutton').pack(anchor="w", pady=3)
+        ttk.Checkbutton(options_content, text="🏷️ Auto-rename files", 
+                       variable=self.settings['auto_rename'],
+                       style='Modern.TCheckbutton').pack(anchor="w", pady=3)
+        ttk.Checkbutton(options_content, text="🔢 Auto-numbering", 
+                       variable=self.settings['auto_numbering'],
+                       style='Modern.TCheckbutton').pack(anchor="w", pady=3)
+        
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
         
     def browse_folder(self, setting_key):
         folder = filedialog.askdirectory()
@@ -59,37 +169,91 @@ class MainSettingsTab:
 
 
 class ImageProcessingTab:
-    def __init__(self, parent, settings):
+    def __init__(self, parent, settings, theme):
         self.settings = settings
+        self.theme = theme
         self.setup_ui(parent)
     
     def setup_ui(self, parent):
-        # JPG Conversion Settings
-        jpg_frame = ttk.LabelFrame(parent, text="JPG Conversion Settings")
-        jpg_frame.pack(fill="x", padx=10, pady=10)
+        # Main scroll frame
+        canvas = tk.Canvas(parent, bg=self.theme.colors['bg_primary'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.theme.colors['bg_primary'])
         
-        ttk.Checkbutton(jpg_frame, text="Convert images to JPG", variable=self.settings['convert_jpg']).pack(anchor="w", padx=5, pady=5)
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
         
-        quality_frame = ttk.Frame(jpg_frame)
-        quality_frame.pack(fill="x", padx=20, pady=5)
-        ttk.Label(quality_frame, text="JPG Quality:").pack(side="left", padx=5)
-        quality_scale = ttk.Scale(quality_frame, from_=1, to=100, orient="horizontal", variable=self.settings['jpg_quality'], length=200)
-        quality_scale.pack(side="left", padx=5)
-        self.quality_label = ttk.Label(quality_frame, text="95%")
-        self.quality_label.pack(side="left", padx=5)
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        window_id = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        # Ensure the inner frame always matches the canvas width so grid columns fill correctly
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(window_id, width=e.width))
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # JPG Conversion Settings Card
+        jpg_card = self.theme.create_card_frame(scrollable_frame, "🖼️ JPG Conversion Settings")
+        jpg_card.pack(fill="x", padx=15, pady=15)
+        
+        jpg_content = tk.Frame(jpg_card, bg=self.theme.colors['bg_primary'])
+        jpg_content.pack(fill="x", padx=20, pady=(10, 20))
+        
+        ttk.Checkbutton(jpg_content, text="🔄 Convert images to JPG", 
+                       variable=self.settings['convert_jpg'],
+                       style='Modern.TCheckbutton').pack(anchor="w", pady=(0, 15))
+        
+        # Quality settings
+        quality_frame = tk.Frame(jpg_content, bg=self.theme.colors['bg_primary'])
+        quality_frame.pack(fill="x", pady=(0, 15))
+        
+        tk.Label(quality_frame, text="Quality Level:", 
+                bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_primary'],
+                font=('Segoe UI', 10, 'bold')).pack(anchor="w", pady=(0, 8))
+        
+        quality_control = tk.Frame(quality_frame, bg=self.theme.colors['bg_primary'])
+        quality_control.pack(fill="x")
+        
+        quality_scale = ttk.Scale(quality_control, from_=1, to=100, orient="horizontal", 
+                                 variable=self.settings['jpg_quality'], length=300)
+        quality_scale.pack(side="left", padx=(0, 15))
+        
+        self.quality_label = tk.Label(quality_control, text="95%", 
+                                     bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_primary'],
+                                     font=('Segoe UI', 12, 'bold'))
+        self.quality_label.pack(side="left")
         
         def update_quality_label(value):
             self.quality_label.config(text=f"{int(float(value))}%")
         quality_scale.config(command=update_quality_label)
         
-        ttk.Checkbutton(jpg_frame, text="Optimize JPG files", variable=self.settings['optimize_jpg']).pack(anchor="w", padx=5, pady=5)
-        ttk.Checkbutton(jpg_frame, text="Delete original after conversion", variable=self.settings['delete_original']).pack(anchor="w", padx=5, pady=5)
+        # Additional options
+        ttk.Checkbutton(jpg_content, text="⚡ Optimize JPG files", 
+                       variable=self.settings['optimize_jpg'],
+                       style='Modern.TCheckbutton').pack(anchor="w", pady=3)
+        ttk.Checkbutton(jpg_content, text="🗑️ Delete original after conversion", 
+                       variable=self.settings['delete_original'],
+                       style='Modern.TCheckbutton').pack(anchor="w", pady=3)
         
-        color_frame = ttk.Frame(jpg_frame)
-        color_frame.pack(fill="x", padx=5, pady=5)
-        ttk.Label(color_frame, text="Background Color (for transparent images):").pack(side="left", padx=5)
-        ttk.Entry(color_frame, textvariable=self.settings['bg_color'], width=15).pack(side="left", padx=5)
-        ttk.Button(color_frame, text="Choose Color", command=self.choose_color).pack(side="left", padx=5)
+        # Background color settings
+        color_frame = tk.Frame(jpg_content, bg=self.theme.colors['bg_primary'])
+        color_frame.pack(fill="x", pady=(15, 0))
+        
+        tk.Label(color_frame, text="Background Color (for transparent images):", 
+                bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_primary'],
+                font=('Segoe UI', 10, 'bold')).pack(anchor="w", pady=(0, 8))
+        
+        color_input = tk.Frame(color_frame, bg=self.theme.colors['bg_primary'])
+        color_input.pack(fill="x")
+        
+        ttk.Entry(color_input, textvariable=self.settings['bg_color'], width=20,
+                 font=('Segoe UI', 10), style='Modern.TEntry').pack(side="left", padx=(0, 10))
+        
+        ttk.Button(color_input, text="🎨 Choose Color", command=self.choose_color,
+                  style='Modern.TButton').pack(side="left")
+        
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
         
     def choose_color(self):
         from tkinter import colorchooser
@@ -99,55 +263,128 @@ class ImageProcessingTab:
 
 
 class NoteProcessingTab:
-    def __init__(self, parent, settings):
+    def __init__(self, parent, settings, theme):
         self.settings = settings
+        self.theme = theme
         self.setup_ui(parent)
     
     def setup_ui(self, parent):
-        # Note Search Settings
-        search_frame = ttk.LabelFrame(parent, text="Note Search Settings")
-        search_frame.pack(fill="x", padx=10, pady=10)
+        # Main scroll frame
+        canvas = tk.Canvas(parent, bg=self.theme.colors['bg_primary'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.theme.colors['bg_primary'])
         
-        ttk.Checkbutton(search_frame, text="Search notes recursively in subdirectories", variable=self.settings['recursive']).pack(anchor="w", padx=5, pady=5)
-        ttk.Checkbutton(search_frame, text="Skip .excalidraw.md files", variable=self.settings['skip_excalidraw']).pack(anchor="w", padx=5, pady=5)
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
         
-        # Image Format Settings
-        format_frame = ttk.LabelFrame(parent, text="Image Format Settings")
-        format_frame.pack(fill="x", padx=10, pady=10)
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        window_id = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        # Ensure the inner frame always matches the canvas width so grid columns fill correctly
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(window_id, width=e.width))
+        canvas.configure(yscrollcommand=scrollbar.set)
         
-        ttk.Label(format_frame, text="Image Format:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        ttk.Entry(format_frame, textvariable=self.settings['image_format'], width=40).grid(row=0, column=1, padx=5, pady=5)
-        ttk.Label(format_frame, text="(use {filename} as placeholder)", font=("Arial", 8), foreground="gray").grid(row=0, column=2, padx=5, pady=5)
+        # Note Search Settings Card
+        search_card = self.theme.create_card_frame(scrollable_frame, "🔍 Note Search Settings")
+        search_card.pack(fill="x", padx=15, pady=15)
         
-        ttk.Label(format_frame, text="Separator:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        ttk.Entry(format_frame, textvariable=self.settings['separator'], width=40).grid(row=1, column=1, padx=5, pady=5)
-        ttk.Label(format_frame, text="(text to add before image code)", font=("Arial", 8), foreground="gray").grid(row=1, column=2, padx=5, pady=5)
+        search_content = tk.Frame(search_card, bg=self.theme.colors['bg_primary'])
+        search_content.pack(fill="x", padx=20, pady=(10, 20))
         
-        # Command Processing
-        command_frame = ttk.LabelFrame(parent, text="Command Processing")
-        command_frame.pack(fill="x", padx=10, pady=10)
+        ttk.Checkbutton(search_content, text="Search notes recursively in subdirectories", 
+                       variable=self.settings['recursive'],
+                       style='Modern.TCheckbutton').pack(anchor="w", pady=3)
+        ttk.Checkbutton(search_content, text="Skip .excalidraw.md files", 
+                       variable=self.settings['skip_excalidraw'],
+                       style='Modern.TCheckbutton').pack(anchor="w", pady=3)
         
-        ttk.Checkbutton(command_frame, text="Clean commands from notes after processing", variable=self.settings['clean_commands']).pack(anchor="w", padx=5, pady=5)
+        # Image Format Settings Card
+        format_card = self.theme.create_card_frame(scrollable_frame, "🖼️ Image Format Settings")
+        format_card.pack(fill="x", padx=15, pady=10)
+        
+        format_content = tk.Frame(format_card, bg=self.theme.colors['bg_primary'])
+        format_content.pack(fill="x", padx=20, pady=(10, 20))
+        
+        tk.Label(format_content, text="Image Format:", 
+                 bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_primary'],
+                 font=('Segoe UI', 10, 'bold')).grid(row=0, column=0, sticky="w", pady=(0, 5))
+        
+        ttk.Entry(format_content, textvariable=self.settings['image_format'], width=40,
+                 font=('Segoe UI', 10), style='Modern.TEntry').grid(row=0, column=1, padx=5, pady=5)
+        
+        tk.Label(format_content, text="(use {filename} as placeholder)", 
+                 font=("Segoe UI", 9), fg="gray", bg=self.theme.colors['bg_primary']).grid(row=0, column=2, padx=5, pady=5)
+        
+        tk.Label(format_content, text="Separator:", 
+                 bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_primary'],
+                 font=('Segoe UI', 10, 'bold')).grid(row=1, column=0, sticky="w", pady=(0, 5))
+        
+        ttk.Entry(format_content, textvariable=self.settings['separator'], width=40,
+                 font=('Segoe UI', 10), style='Modern.TEntry').grid(row=1, column=1, padx=5, pady=5)
+        
+        tk.Label(format_content, text="(text to add before image code)", 
+                 font=("Segoe UI", 9), fg="gray", bg=self.theme.colors['bg_primary']).grid(row=1, column=2, padx=5, pady=5)
+        
+        # Command Processing Card
+        command_card = self.theme.create_card_frame(scrollable_frame, "⚙️ Command Processing")
+        command_card.pack(fill="x", padx=15, pady=10)
+        
+        command_content = tk.Frame(command_card, bg=self.theme.colors['bg_primary'])
+        command_content.pack(fill="x", padx=20, pady=(10, 20))
+        
+        ttk.Checkbutton(command_content, text="Clean commands from notes after processing", 
+                       variable=self.settings['clean_commands'],
+                       style='Modern.TCheckbutton').pack(anchor="w", pady=3)
+        
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
 
 class NoteCommandsTab:
-    def __init__(self, parent, settings, note_commands, log_callback):
+    def __init__(self, parent, settings, note_commands, log_callback, theme):
         self.settings = settings
         self.note_commands = note_commands
         self.log_callback = log_callback
+        self.theme = theme
         self.setup_ui(parent)
     
     def setup_ui(self, parent):
-        # Enable/Disable Note Commands
-        enable_frame = ttk.LabelFrame(parent, text="Note Commands")
-        enable_frame.pack(fill="x", padx=10, pady=10)
+        # Main scroll frame
+        canvas = tk.Canvas(parent, bg=self.theme.colors['bg_primary'], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=self.theme.colors['bg_primary'])
         
-        ttk.Checkbutton(enable_frame, text="Enable note commands", variable=self.settings['enable_note_commands'], 
-                       command=self.toggle_note_commands).pack(anchor="w", padx=5, pady=5)
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
         
-        # Prefix Priority Information
-        priority_frame = ttk.LabelFrame(parent, text="Prefix Priority Order")
-        priority_frame.pack(fill="x", padx=10, pady=10)
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        window_id = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        # Ensure the inner frame always matches the canvas width so grid columns fill correctly
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(window_id, width=e.width))        
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Enable/Disable Note Commands Card
+        enable_card = self.theme.create_card_frame(scrollable_frame, "🛠️ Note Commands")
+        enable_card.pack(fill="x", padx=15, pady=15)
+        
+        enable_content = tk.Frame(enable_card, bg=self.theme.colors['bg_primary'])
+        enable_content.pack(fill="x", padx=20, pady=(10, 20))
+        
+        ttk.Checkbutton(enable_content, text="Enable note commands", 
+                       variable=self.settings['enable_note_commands'], 
+                       command=self.toggle_note_commands,
+                       style='Modern.TCheckbutton').pack(anchor="w", pady=3)
+        
+        # Prefix Priority Information Card
+        priority_card = self.theme.create_card_frame(scrollable_frame, "📊 Prefix Priority Order")
+        priority_card.pack(fill="x", padx=15, pady=10)
+        
+        priority_content = tk.Frame(priority_card, bg=self.theme.colors['bg_primary'])
+        priority_content.pack(fill="x", padx=20, pady=(10, 20))
         
         priority_text = """Priority (highest to lowest):
 1. Override Prefix (from Main Settings tab) - Always wins when not empty
@@ -155,14 +392,17 @@ class NoteCommandsTab:
 3. Auto-detected Prefix - Most common prefix found in existing image codes
 4. Default Prefix - Fallback option"""
         
-        priority_label = tk.Text(priority_frame, height=6, width=70, font=("Arial", 9))
+        priority_label = tk.Text(priority_content, height=6, width=70, font=("Segoe UI", 9))
         priority_label.insert("1.0", priority_text)
         priority_label.config(state="disabled", background="#f0f0f0", relief="flat", borderwidth=0)
         priority_label.pack(padx=10, pady=10)
         
-        # Individual Commands
-        commands_frame = ttk.LabelFrame(parent, text="Available Commands (when enabled in notes)")
-        commands_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        # Individual Commands Card
+        commands_card = self.theme.create_card_frame(scrollable_frame, "📋 Available Commands")
+        commands_card.pack(fill="both", expand=True, padx=15, pady=10)
+        
+        commands_content = tk.Frame(commands_card, bg=self.theme.colors['bg_primary'])
+        commands_content.pack(fill="x", padx=20, pady=(10, 20))
         
         # Create a grid of checkboxes for each command
         commands_info = [
@@ -176,19 +416,22 @@ class NoteCommandsTab:
             ('$bg_color=', 'Set background color', 'bg_color'),
         ]
         
-        ttk.Label(commands_frame, text="Command", font=("Arial", 10, "bold")).grid(row=0, column=0, padx=5, pady=5)
-        ttk.Label(commands_frame, text="Description", font=("Arial", 10, "bold")).grid(row=0, column=1, padx=5, pady=5)
-        ttk.Label(commands_frame, text="Enable", font=("Arial", 10, "bold")).grid(row=0, column=2, padx=5, pady=5)
+        ttk.Label(commands_content, text="Command", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, padx=5, pady=5)
+        ttk.Label(commands_content, text="Description", font=("Segoe UI", 10, "bold")).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Label(commands_content, text="Enable", font=("Segoe UI", 10, "bold")).grid(row=0, column=2, padx=5, pady=5)
         
         for i, (cmd, desc, var_name) in enumerate(commands_info, start=1):
-            ttk.Label(commands_frame, text=cmd, font=("Courier", 10)).grid(row=i, column=0, sticky="w", padx=5, pady=2)
-            ttk.Label(commands_frame, text=desc).grid(row=i, column=1, sticky="w", padx=5, pady=2)
-            cmd_checkbox = ttk.Checkbutton(commands_frame, variable=self.note_commands[var_name])
+            ttk.Label(commands_content, text=cmd, font=("Courier", 10)).grid(row=i, column=0, sticky="w", padx=5, pady=2)
+            ttk.Label(commands_content, text=desc).grid(row=i, column=1, sticky="w", padx=5, pady=2)
+            cmd_checkbox = ttk.Checkbutton(commands_content, variable=self.note_commands[var_name])
             cmd_checkbox.grid(row=i, column=2, padx=5, pady=2)
         
         # Example usage
-        example_frame = ttk.LabelFrame(parent, text="Example Usage in Notes")
-        example_frame.pack(fill="x", padx=10, pady=10)
+        example_card = self.theme.create_card_frame(scrollable_frame, "💡 Example Usage in Notes")
+        example_card.pack(fill="x", padx=15, pady=10)
+        
+        example_content = tk.Frame(example_card, bg=self.theme.colors['bg_primary'])
+        example_content.pack(fill="x", padx=20, pady=(10, 20))
         
         example_text = """$prefix=Screenshot
 $quality=85
@@ -199,10 +442,14 @@ $rename=false
 
 Note: Override Prefix will ignore the $prefix= command above."""
         
-        example_label = tk.Text(example_frame, height=8, width=50, font=("Courier", 9))
+        example_label = tk.Text(example_content, height=8, width=50, font=("Courier", 9))
         example_label.insert("1.0", example_text)
         example_label.config(state="disabled", background="#f0f0f0")
         example_label.pack(padx=10, pady=10)
+        
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
         
     def toggle_note_commands(self):
         """Enable/disable individual note command checkboxes"""
