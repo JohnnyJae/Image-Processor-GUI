@@ -27,7 +27,8 @@ class SettingsManager:
             'separator': '',
             'clean_commands': False,
             'cooldown': 2.0,
-            'enable_note_commands': True
+            'enable_note_commands': True,
+            'dark_theme': False
         }
     
     @staticmethod

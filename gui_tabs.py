@@ -139,7 +139,7 @@ class MainSettingsTab:
         
         ttk.Spinbox(cooldown_row, from_=0.1, to=10.0, increment=0.1, 
                    textvariable=self.settings['cooldown'], width=5,
-                   font=('Segoe UI', 10)).pack(anchor="w")
+                   font=('Segoe UI', 10), style='Modern.TSpinbox').pack(anchor="w")
         
         # Processing Options Card
         options_card = self.theme.create_card_frame(options_container, "🔄 Processing Options")
@@ -220,7 +220,8 @@ class ImageProcessingTab:
         quality_control.pack(fill="x")
 
         quality_scale = ttk.Scale(quality_control, from_=1, to=100, orient="horizontal", 
-                                 variable=self.settings['jpg_quality'], length=300)
+                                 variable=self.settings['jpg_quality'], length=300,
+                                 style='Modern.Horizontal.TScale')
         quality_scale.pack(side="left", padx=(0, 15))
 
         self.quality_label = tk.Label(quality_control, text="95%", 

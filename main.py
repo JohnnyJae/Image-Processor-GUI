@@ -20,7 +20,10 @@ class ImageProcessorGUI:
         
         # Initialize theme
         self.theme = ModernThemeManager()
-        self.theme.apply_modern_theme(root)
+        self.style = self.theme.apply_modern_theme(root)
+        
+        # Register theme change callback
+        self.theme.register_theme_change_callback(self.on_theme_changed)
         
         # Initialize settings
         self.settings = self._create_settings_variables()
@@ -63,6 +66,28 @@ class ImageProcessorGUI:
         
         return variables
         
+    def on_theme_changed(self):
+        """Called when theme is toggled"""
+        # Reapply theme styles
+        self.style = self.theme.apply_modern_theme(self.root, self.style)
+        
+        # Refresh all widget colors
+        self.theme.refresh_widget_colors(self.root)
+        
+        # Update the theme toggle button text
+        if hasattr(self, 'theme_button'):
+            icon = "🌙" if self.theme.is_dark_mode else "☀️"
+            theme_name = self.theme.get_theme_name()
+            self.theme_button.config(text=f"{icon} {theme_name} Theme")
+        
+        # Log the theme change
+        theme_name = self.theme.get_theme_name()
+        self.log_message(f"Switched to {theme_name} theme", "INFO")
+        
+    def toggle_theme(self):
+        """Toggle between light and dark theme"""
+        self.theme.toggle_theme()
+        
     def on_override_prefix_change(self, *args):
         """Called when override prefix changes - updates handler in real-time"""
         if self.handler and self.is_running:
@@ -79,11 +104,35 @@ class ImageProcessorGUI:
         # Main container with padding
         main_container = tk.Frame(self.root, bg=self.theme.colors['bg_secondary'])
         main_container.pack(fill="both", expand=True, padx=15, pady=15)
-      
+        
+        # Header with title and theme toggle
+        header_frame = tk.Frame(main_container, bg=self.theme.colors['bg_secondary'])
+        header_frame.pack(fill="x", pady=(0, 10))
+        
+        # App title
+        title_label = tk.Label(
+            header_frame,
+            text="🖼️ Obsidian Image Processor",
+            bg=self.theme.colors['bg_secondary'],
+            fg=self.theme.colors['text_primary'],
+            font=('Segoe UI', 16, 'bold')
+        )
+        title_label.pack(side="left")
+        
+        # Theme toggle button
+        icon = "🌙" if self.theme.is_dark_mode else "☀️"
+        theme_name = self.theme.get_theme_name()
+        self.theme_button = ttk.Button(
+            header_frame,
+            text=f"{icon} {theme_name} Theme",
+            command=self.toggle_theme,
+            style='Theme.TButton'
+        )
+        self.theme_button.pack(side="right")
         
         # Create notebook for tabs with modern styling
         notebook = ttk.Notebook(main_container, style='Modern.TNotebook')
-        notebook.pack(fill="both", expand=True, pady=(10, 0))
+        notebook.pack(fill="both", expand=True)
         
         # Main Settings Tab
         main_tab = tk.Frame(notebook, bg=self.theme.colors['bg_primary'])
@@ -172,20 +221,23 @@ class ImageProcessorGUI:
         log_content.pack(fill="both", expand=True, padx=20, pady=(10, 20))
         
         # Create custom styled text widget
+        log_bg = '#2d3748' if self.theme.is_dark_mode else '#fafafa'
         self.log_text = tk.Text(
             log_content, 
             wrap=tk.WORD,
-            bg='#fafafa',
+            bg=log_bg,
             fg=self.theme.colors['text_primary'],
             font=('Consolas', 10),
             relief='solid',
             bd=1,
             padx=10,
-            pady=10
+            pady=10,
+            insertbackground=self.theme.colors['text_primary']
         )
         
         # Scrollbar
-        scrollbar = ttk.Scrollbar(log_content, orient="vertical", command=self.log_text.yview)
+        scrollbar = ttk.Scrollbar(log_content, orient="vertical", command=self.log_text.yview, 
+                                 style='Modern.Vertical.TScrollbar')
         self.log_text.configure(yscrollcommand=scrollbar.set)
         
         # Pack with scrollbar
@@ -312,6 +364,9 @@ class ImageProcessorGUI:
             settings_dict = {key: var.get() for key, var in self.settings.items()}
             note_commands_dict = {key: var.get() for key, var in self.note_commands.items()}
             
+            # Add theme setting
+            settings_dict['dark_theme'] = self.theme.is_dark_mode
+            
             success, message = SettingsManager.save_settings(settings_dict, note_commands_dict)
             
             self.log_message(message)
@@ -330,9 +385,19 @@ class ImageProcessorGUI:
             success, settings_dict, note_commands_dict, message = SettingsManager.load_settings()
             
             if success:
+                # Check for theme setting and apply it first
+                if 'dark_theme' in settings_dict and settings_dict['dark_theme'] != self.theme.is_dark_mode:
+                    # Toggle theme if needed
+                    if settings_dict['dark_theme']:
+                        if not self.theme.is_dark_mode:
+                            self.theme.toggle_theme()
+                    else:
+                        if self.theme.is_dark_mode:
+                            self.theme.toggle_theme()
+                
                 # Update settings variables
                 for key, value in settings_dict.items():
-                    if key in self.settings:
+                    if key in self.settings and key != 'dark_theme':  # Skip dark_theme as it's handled above
                         self.settings[key].set(value)
                 
                 # Update note commands variables
