@@ -1,6 +1,10 @@
 # Obsidian Image Processor (Tkinter GUI)
 
-An easy-to-use desktop GUI that watches an image folder and automatically processes new images for use in an Obsidian vault. The app can convert images to JPG, rename files using configurable prefixes and numbering, and append image links to the most-recently-modified markdown note in your vault. A modern Tkinter-based UI exposes settings, note-command controls, and a realtime activity log.
+An easy-to-use desktop GUI that watches an image folder and automatically processes new images for use in an Obsidian vault. 
+
+NOTE: You don't need Obsidian, but it only reads .md files (will add more options for this later).
+
+The app can convert images to JPG, rename files using configurable prefixes and numbering, and append image links to the most-recently-modified markdown note in your vault. A modern Tkinter-based UI exposes settings, note-command controls, and a realtime activity log.
 
 This README covers installation, usage, the available settings, and the inline note commands you can use to customize behavior per-note.
 
@@ -26,10 +30,6 @@ python -m venv .venv
 pip install -r requirements.txt
 python .\main.py
 ```
-
-Notes:
-- If you don't want to use a virtual environment you can install requirements globally, but a venv is recommended.
-- `Tkinter` is required — it usually ships with the standard Python installer on Windows.
 
 ## Files of interest
 
