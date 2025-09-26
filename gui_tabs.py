@@ -83,39 +83,71 @@ class MainSettingsTab:
         prefix_content = tk.Frame(prefix_card, bg=self.theme.colors['bg_primary'])
         prefix_content.pack(fill="x", padx=15, pady=(5, 10))
         
-        # Override prefix (with highlight)
-        override_frame = tk.Frame(prefix_content, bg='#fef3c7', relief='solid', bd=1)
-        override_frame.pack(fill="x", pady=(0, 15))
+        # Automatic Prefix Toggle
+        auto_prefix_frame = tk.Frame(prefix_content, bg='#e0f2fe', relief='solid', bd=1)
+        auto_prefix_frame.pack(fill="x", pady=(0, 15))
         
-        override_inner = tk.Frame(override_frame, bg='#fef3c7')
+        auto_prefix_inner = tk.Frame(auto_prefix_frame, bg='#e0f2fe')
+        auto_prefix_inner.pack(fill="x", padx=15, pady=15)
+        
+        self.auto_prefix_checkbox = ttk.Checkbutton(
+            auto_prefix_inner, 
+            text="🤖 Automatic Prefix (from filename)", 
+            variable=self.settings['automatic_prefix_enabled'],
+            command=self.on_automatic_prefix_toggle,
+            style='Modern.TCheckbutton'
+        )
+        self.auto_prefix_checkbox.pack(anchor="w", pady=(0, 8))
+        
+        # User prefix entry (shown when automatic is enabled)
+        self.auto_prefix_user_frame = tk.Frame(auto_prefix_inner, bg='#e0f2fe')
+        
+        tk.Label(self.auto_prefix_user_frame, text="Game/User Prefix:", 
+                bg='#e0f2fe', fg='#0277bd',
+                font=('Segoe UI', 10, 'bold')).pack(anchor="w", pady=(0, 5))
+        
+        ttk.Entry(self.auto_prefix_user_frame, textvariable=self.settings['automatic_prefix_user'],
+                 font=('Segoe UI', 10), style='Modern.TEntry').pack(fill="x", pady=(0, 5))
+        
+        tk.Label(self.auto_prefix_user_frame, text="💡 Example: 'DyingLight' + 'Good Vibrations.md' → DyingLight-GoodVibrations_1.jpg",
+                bg='#e0f2fe', fg='#0277bd',
+                font=('Segoe UI', 9)).pack(anchor="w")
+        
+        # Override prefix (with conditional highlighting)
+        self.override_frame = tk.Frame(prefix_content, bg='#fef3c7', relief='solid', bd=1)
+        
+        override_inner = tk.Frame(self.override_frame, bg='#fef3c7')
         override_inner.pack(fill="x", padx=15, pady=15)
         
         tk.Label(override_inner, text="🎯 Override Prefix (Highest Priority):", 
                 bg='#fef3c7', fg='#92400e',
                 font=('Segoe UI', 10, 'bold')).pack(anchor="w", pady=(0, 8))
         
-        override_entry = ttk.Entry(override_inner, textvariable=self.settings['override_prefix'], 
-                                  font=('Segoe UI', 11), style='Modern.TEntry')
-        override_entry.pack(fill="x", pady=(0, 5))
+        self.override_entry = ttk.Entry(override_inner, textvariable=self.settings['override_prefix'], 
+                                      font=('Segoe UI', 11), style='Modern.TEntry')
+        self.override_entry.pack(fill="x", pady=(0, 5))
         
         tk.Label(override_inner, text="⚠️ When set, this prefix overrides all other prefix sources",
                 bg='#fef3c7', fg='#92400e',
                 font=('Segoe UI', 9)).pack(anchor="w")
         
         # Default prefix
-        default_row = tk.Frame(prefix_content, bg=self.theme.colors['bg_primary'])
-        default_row.pack(fill="x")
+        self.default_row = tk.Frame(prefix_content, bg=self.theme.colors['bg_primary'])
         
-        tk.Label(default_row, text="Default Prefix:", 
+        tk.Label(self.default_row, text="Default Prefix:", 
                 bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_primary'],
                 font=('Segoe UI', 10, 'bold')).pack(anchor="w", pady=(0, 5))
         
-        ttk.Entry(default_row, textvariable=self.settings['default_prefix'],
-                 font=('Segoe UI', 10), style='Modern.TEntry').pack(fill="x", pady=(0, 5))
+        self.default_entry = ttk.Entry(self.default_row, textvariable=self.settings['default_prefix'],
+                 font=('Segoe UI', 10), style='Modern.TEntry')
+        self.default_entry.pack(fill="x", pady=(0, 5))
         
-        tk.Label(default_row, text="Used as fallback when no override or note commands are present",
+        tk.Label(self.default_row, text="Used as fallback when no override or note commands are present",
                 bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_secondary'],
                 font=('Segoe UI', 9)).pack(anchor="w")
+        
+        # Initial state setup
+        self.on_automatic_prefix_toggle()
         
         # Horizontal container for basic and processing options
         options_container = tk.Frame(scrollable_frame, bg=self.theme.colors['bg_primary'])
@@ -166,6 +198,25 @@ class MainSettingsTab:
         folder = filedialog.askdirectory()
         if folder:
             self.settings[setting_key].set(folder)
+    
+    def on_automatic_prefix_toggle(self):
+        """Toggle UI elements based on automatic prefix setting"""
+        automatic_enabled = self.settings['automatic_prefix_enabled'].get()
+        
+        if automatic_enabled:
+            # Show automatic prefix user entry
+            self.auto_prefix_user_frame.pack(fill="x", pady=(0, 8))
+            
+            # Hide/disable override and default prefix sections
+            self.override_frame.pack_forget()
+            self.default_row.pack_forget()
+        else:
+            # Hide automatic prefix user entry
+            self.auto_prefix_user_frame.pack_forget()
+            
+            # Show override and default prefix sections
+            self.override_frame.pack(fill="x", pady=(0, 15))
+            self.default_row.pack(fill="x")
 
 
 class ImageProcessingTab:

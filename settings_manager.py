@@ -13,6 +13,8 @@ class SettingsManager:
             'images_folder': '',
             'default_prefix': 'Game',
             'override_prefix': '',
+            'automatic_prefix_enabled': False,
+            'automatic_prefix_user': '',
             'convert_jpg': True,
             'jpg_quality': 95,
             'optimize_jpg': True,

@@ -30,6 +30,41 @@ class ImageHandler(FileSystemEventHandler):
             self.log_callback(f"[{level}] {message}")
         self.logger.log(getattr(logging, level), message)
         
+    def create_subprefix_from_filename(self, note_path):
+        """Create a subprefix from the note filename by removing non-alphanumeric chars and capitalizing words"""
+        filename = note_path.stem  # Get filename without extension
+        
+        # Remove non-alphanumeric characters and split into words
+        import string
+        # Replace non-alphanumeric with spaces, then split
+        cleaned = ''.join(c if c.isalnum() else ' ' for c in filename)
+        words = cleaned.split()
+        
+        # Capitalize each word and join them
+        subprefix = ''.join(word.capitalize() for word in words if word)
+        
+        return subprefix if subprefix else "Untitled"
+        
+    def build_automatic_prefix(self, note_path):
+        """Build automatic prefix from user prefix and note filename"""
+        user_prefix = self.options.get('automatic_prefix_user', '').strip()
+        subprefix = self.create_subprefix_from_filename(note_path)
+        
+        if user_prefix and subprefix:
+            # Ensure only one hyphen between user prefix and subprefix
+            user_clean = user_prefix.rstrip('-')
+            final_prefix = f"{user_clean}-{subprefix}"
+        elif user_prefix:
+            final_prefix = user_prefix.rstrip('-')
+        elif subprefix:
+            final_prefix = subprefix
+        else:
+            # Fallback to default prefix
+            final_prefix = self.default_prefix
+            
+        self.log(f"Built automatic prefix: {final_prefix} (user: '{user_prefix}', subprefix: '{subprefix}')", "INFO")
+        return final_prefix
+        
     def on_created(self, event):
         if event.is_directory:
             return
@@ -202,20 +237,30 @@ class ImageHandler(FileSystemEventHandler):
         
         return commands
 
-    def get_effective_prefix(self, content, note_commands=None):
-        """Get the effective prefix considering override, note commands, and auto-detection"""
-        # Priority 1: Override prefix (highest priority)
+    def get_effective_prefix(self, content, note_commands=None, note_path=None):
+        """Get the effective prefix considering automatic, override, note commands, and auto-detection"""
+        
+        # Priority 1: Automatic prefix system (if enabled)
+        if self.options.get('automatic_prefix_enabled', False):
+            if note_path:
+                automatic_prefix = self.build_automatic_prefix(note_path)
+                self.log(f"Using automatic prefix: {automatic_prefix}", "INFO")
+                return automatic_prefix
+            else:
+                self.log("Automatic prefix enabled but no note path provided, falling back", "WARNING")
+        
+        # Priority 2: Override prefix (highest priority in manual mode)
         override_prefix = self.options.get('override_prefix', '').strip()
         if override_prefix:
             self.log(f"Using override prefix: {override_prefix}", "INFO")
             return override_prefix
         
-        # Priority 2: Note command prefix
+        # Priority 3: Note command prefix
         if note_commands and 'prefix' in note_commands:
             self.log(f"Using note command prefix: {note_commands['prefix']}", "INFO")
             return note_commands['prefix']
         
-        # Priority 3: Auto-detected prefix (if auto-numbering is enabled)
+        # Priority 4: Auto-detected prefix (if auto-numbering is enabled)
         if self.options.get('auto_numbering', True) or (note_commands and note_commands.get('numbering')):
             # Pattern to match [[File:Prefix_Number.Extension]] with optional captions and formatting
             pattern = r'\[\[File:([^_]+)_(\d+)\.[^|\]]+(?:\|[^\]]+)?\]\]'
@@ -232,18 +277,37 @@ class ImageHandler(FileSystemEventHandler):
                 self.log(f"Auto-detected prefix: {most_common_prefix}", "INFO")
                 return most_common_prefix
         
-        # Priority 4: Default prefix (lowest priority)
+        # Priority 5: Default prefix (lowest priority)
         self.log(f"Using default prefix: {self.default_prefix}", "INFO")
         return self.default_prefix
 
-    def extract_prefix_and_highest_number(self, content, note_commands=None):
+    def extract_prefix_and_highest_number(self, content, note_commands=None, note_path=None):
         """Extract prefix and find highest number from existing image codes"""
         # Get the effective prefix
-        effective_prefix = self.get_effective_prefix(content, note_commands)
+        effective_prefix = self.get_effective_prefix(content, note_commands, note_path)
         
         # If numbering is disabled, return prefix with number 0
         if not self.options.get('auto_numbering', True) and not (note_commands and note_commands.get('numbering')):
             return effective_prefix, 0
+        
+        # For automatic prefix system, always start numbering at 1 instead of finding highest
+        if self.options.get('automatic_prefix_enabled', False):
+            # Pattern to match [[File:Prefix_Number.Extension]] with optional captions and formatting
+            pattern = r'\[\[File:([^_]+)_(\d+)\.[^|\]]+(?:\|[^\]]+)?\]\]'
+            matches = re.findall(pattern, content)
+            
+            if not matches:
+                return effective_prefix, 0
+            
+            # Find the highest number for the effective prefix
+            prefix_numbers = []
+            for prefix, number in matches:
+                if prefix == effective_prefix:
+                    prefix_numbers.append(int(number))
+            
+            highest_number = max(prefix_numbers) if prefix_numbers else 0
+            self.log(f"Using automatic prefix: {effective_prefix}, highest number: {highest_number}", "INFO")
+            return effective_prefix, highest_number
         
         # Pattern to match [[File:Prefix_Number.Extension]] with optional captions and formatting
         pattern = r'\[\[File:([^_]+)_(\d+)\.[^|\]]+(?:\|[^\]]+)?\]\]'
@@ -287,8 +351,8 @@ class ImageHandler(FileSystemEventHandler):
         # Convert to JPG if enabled (considering note commands)
         processed_path = self.convert_to_jpg(original_path, note_commands)
         
-        # Extract prefix and highest number (considering note commands and override)
-        prefix, highest_number = self.extract_prefix_and_highest_number(content, note_commands)
+        # Extract prefix and highest number (considering note commands, override, and automatic prefix)
+        prefix, highest_number = self.extract_prefix_and_highest_number(content, note_commands, note_path)
         
         # Check if renaming is enabled (globally or by note command)
         auto_rename = self.options.get('auto_rename', True)
