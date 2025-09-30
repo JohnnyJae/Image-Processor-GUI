@@ -16,8 +16,30 @@ class ImageHandler(FileSystemEventHandler):
         self.cooldown_seconds = options.get('cooldown', 2.0)
         self.log_callback = log_callback
         
+        # Performance optimizations
+        self._cached_note_path = None
+        self._cached_note_mtime = 0
+        self._note_cache_valid = False
+        
+        # Pre-compile regex patterns for better performance
+        self._compiled_patterns = self._compile_regex_patterns()
+        
         # Setup logging
         self.logger = logging.getLogger(__name__)
+        
+    def _compile_regex_patterns(self):
+        """Pre-compile regex patterns for better performance"""
+        return {
+            'prefix': re.compile(r'\$pre(?:fix)?=([^\s\n]+)', re.IGNORECASE),
+            'quality': re.compile(r'\$quality=(\d+)', re.IGNORECASE),
+            'format': re.compile(r'\$format=([^\n]+)', re.IGNORECASE),
+            'separator': re.compile(r'\$sep(?:arator)?=([^\n]*)', re.IGNORECASE),
+            'convert': re.compile(r'\$convert=(true|false|on|off|yes|no)', re.IGNORECASE),
+            'rename': re.compile(r'\$rename=(true|false|on|off|yes|no)', re.IGNORECASE),
+            'numbering': re.compile(r'\$num(?:bering)?=(true|false|on|off|yes|no)', re.IGNORECASE),
+            'bg_color': re.compile(r'\$bg(?:_?color)?=([#\w]+)', re.IGNORECASE),
+            'image_code': re.compile(r'\[\[File:([^_]+)_(\d+)\.[^|\]]+(?:\|[^\]]+)?\]\]')
+        }
         
     def update_options(self, new_options):
         """Update options dynamically without restarting"""
@@ -75,7 +97,7 @@ class ImageHandler(FileSystemEventHandler):
             self.log(f"Cooldown active, ignoring {event.src_path}", "INFO")
             return
             
-        file_path = Path(event.src_path)
+        file_path = Path(str(event.src_path))
         
         # Check if it's an image file
         if not self.is_image_file(file_path):
@@ -170,8 +192,23 @@ class ImageHandler(FileSystemEventHandler):
             return image_path
     
     def get_last_modified_note(self):
-        """Find the most recently modified .md file in the vault"""
+        """Find the most recently modified .md file in the vault with caching"""
         try:
+            # Check if we have a cached note and if it's still valid
+            if self._cached_note_path and self._note_cache_valid:
+                try:
+                    current_mtime = self._cached_note_path.stat().st_mtime
+                    # If the cached note is still the most recent, return it
+                    if current_mtime >= self._cached_note_mtime:
+                        self.log(f"Using cached note: {self._cached_note_path}", "DEBUG")
+                        return self._cached_note_path
+                except (OSError, FileNotFoundError):
+                    # Cached file no longer exists, invalidate cache
+                    self._note_cache_valid = False
+            
+            # Cache miss or invalid - do full search
+            self.log("Performing full note search (cache miss)", "DEBUG")
+            
             # Search for all .md files in the vault
             md_files = []
             search_path = self.obsidian_vault_path
@@ -196,6 +233,12 @@ class ImageHandler(FileSystemEventHandler):
             
             # Sort by modification time, most recent first
             latest_note = max(md_files, key=lambda x: x.stat().st_mtime)
+            
+            # Update cache
+            self._cached_note_path = latest_note
+            self._cached_note_mtime = latest_note.stat().st_mtime
+            self._note_cache_valid = True
+            
             self.log(f"Using most recently modified note: {latest_note}", "INFO")
             return latest_note
         except Exception as e:
@@ -203,23 +246,15 @@ class ImageHandler(FileSystemEventHandler):
             raise
     
     def parse_note_commands(self, content):
-        """Parse special commands from the note content"""
+        """Parse special commands from the note content using pre-compiled patterns"""
         commands = {}
         
-        # Command patterns - case insensitive
-        command_patterns = {
-            'prefix': r'\$pre(?:fix)?=([^\s\n]+)',
-            'quality': r'\$quality=(\d+)',
-            'format': r'\$format=([^\n]+)',
-            'separator': r'\$sep(?:arator)?=([^\n]*)',
-            'convert': r'\$convert=(true|false|on|off|yes|no)',
-            'rename': r'\$rename=(true|false|on|off|yes|no)',
-            'numbering': r'\$num(?:bering)?=(true|false|on|off|yes|no)',
-            'bg_color': r'\$bg(?:_?color)?=([#\w]+)',
-        }
-        
-        for command, pattern in command_patterns.items():
-            matches = re.findall(pattern, content, re.IGNORECASE)
+        # Use pre-compiled patterns for better performance
+        for command, pattern in self._compiled_patterns.items():
+            if command == 'image_code':  # Skip this one, it's for prefix extraction
+                continue
+                
+            matches = pattern.findall(content)
             if matches:
                 value = matches[-1]  # Use the last occurrence if multiple
                 
@@ -262,9 +297,8 @@ class ImageHandler(FileSystemEventHandler):
         
         # Priority 4: Auto-detected prefix (if auto-numbering is enabled)
         if self.options.get('auto_numbering', True) or (note_commands and note_commands.get('numbering')):
-            # Pattern to match [[File:Prefix_Number.Extension]] with optional captions and formatting
-            pattern = r'\[\[File:([^_]+)_(\d+)\.[^|\]]+(?:\|[^\]]+)?\]\]'
-            matches = re.findall(pattern, content)
+            # Use pre-compiled pattern for better performance
+            matches = self._compiled_patterns['image_code'].findall(content)
             
             if matches:
                 # Count occurrences of each prefix
@@ -292,9 +326,8 @@ class ImageHandler(FileSystemEventHandler):
         
         # For automatic prefix system, always start numbering at 1 instead of finding highest
         if self.options.get('automatic_prefix_enabled', False):
-            # Pattern to match [[File:Prefix_Number.Extension]] with optional captions and formatting
-            pattern = r'\[\[File:([^_]+)_(\d+)\.[^|\]]+(?:\|[^\]]+)?\]\]'
-            matches = re.findall(pattern, content)
+            # Use pre-compiled pattern for better performance
+            matches = self._compiled_patterns['image_code'].findall(content)
             
             if not matches:
                 return effective_prefix, 0
@@ -309,9 +342,8 @@ class ImageHandler(FileSystemEventHandler):
             self.log(f"Using automatic prefix: {effective_prefix}, highest number: {highest_number}", "INFO")
             return effective_prefix, highest_number
         
-        # Pattern to match [[File:Prefix_Number.Extension]] with optional captions and formatting
-        pattern = r'\[\[File:([^_]+)_(\d+)\.[^|\]]+(?:\|[^\]]+)?\]\]'
-        matches = re.findall(pattern, content)
+        # Use pre-compiled pattern for better performance
+        matches = self._compiled_patterns['image_code'].findall(content)
         
         if not matches:
             return effective_prefix, 0
@@ -327,7 +359,8 @@ class ImageHandler(FileSystemEventHandler):
         return effective_prefix, highest_number
     
     def process_image(self, original_path):
-        """Main processing function"""
+        """Main processing function with optimized file I/O"""
+        start_time = time.time()
         self.log(f"Processing new image: {original_path}", "INFO")
         
         if not self.options.get('add_to_note', True):
@@ -339,12 +372,12 @@ class ImageHandler(FileSystemEventHandler):
         # Get the last modified note
         note_path = self.get_last_modified_note()
         
-        # Read note content
+        # Read note content ONCE
         with open(note_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+            original_content = f.read()
         
         # Parse commands from the note
-        note_commands = self.parse_note_commands(content)
+        note_commands = self.parse_note_commands(original_content)
         if note_commands:
             self.log(f"Applied note commands: {note_commands}", "INFO")
         
@@ -352,14 +385,14 @@ class ImageHandler(FileSystemEventHandler):
         processed_path = self.convert_to_jpg(original_path, note_commands)
         
         # Extract prefix and highest number (considering note commands, override, and automatic prefix)
-        prefix, highest_number = self.extract_prefix_and_highest_number(content, note_commands, note_path)
+        prefix, highest_number = self.extract_prefix_and_highest_number(original_content, note_commands, note_path)
         
         # Check if renaming is enabled (globally or by note command)
         auto_rename = self.options.get('auto_rename', True)
         if note_commands and 'rename' in note_commands:
             auto_rename = note_commands['rename']
         
-        # Check if numbering is enabled (globally or by note command)  
+        # Check if numbering is enabled (globally or by note command)
         auto_numbering = self.options.get('auto_numbering', True)
         if note_commands and 'numbering' in note_commands:
             auto_numbering = note_commands['numbering']
@@ -399,34 +432,34 @@ class ImageHandler(FileSystemEventHandler):
         separator_text = note_commands.get('separator') if note_commands and 'separator' in note_commands else self.options.get('separator', '')
         separator = '\n' + separator_text if separator_text else '\n'
         
-        # Append to note
-        with open(note_path, 'a', encoding='utf-8') as f:
-            f.write(f"{separator}{image_code}")
+        # Prepare final content for single write operation
+        final_content = original_content
         
-        self.log(f"Added {image_code} to {note_path.name}", "INFO")
-        
-        # Clean up processed commands (optional - remove them from the note)
+        # Clean up processed commands if requested (modify content before writing)
         if note_commands and self.options.get('clean_commands', False):
-            self.clean_note_commands(note_path, content)
+            final_content = self._clean_commands_from_content(final_content)
+        
+        # Add image code to final content
+        final_content += f"{separator}{image_code}"
+        
+        # Write everything in ONE operation
+        with open(note_path, 'w', encoding='utf-8') as f:
+            f.write(final_content)
+        
+        # Invalidate note cache since we modified the file
+        self._note_cache_valid = False
+        
+        processing_time = time.time() - start_time
+        self.log(f"Added {image_code} to {note_path.name} (processed in {processing_time:.2f}s)", "INFO")
 
-    def clean_note_commands(self, note_path, content):
-        """Remove processed commands from the note"""
+    def _clean_commands_from_content(self, content):
+        """Remove processed commands from content (internal helper)"""
         try:
-            # Patterns for all commands
-            command_patterns = [
-                r'\$pre(?:fix)?=[^\s\n]+',
-                r'\$quality=\d+',
-                r'\$format=[^\n]+',
-                r'\$sep(?:arator)?=[^\n]*',
-                r'\$convert=(?:true|false|on|off|yes|no)',
-                r'\$rename=(?:true|false|on|off|yes|no)',
-                r'\$num(?:bering)?=(?:true|false|on|off|yes|no)',
-                r'\$bg(?:_?color)?=[#\w]+',
-            ]
-            
+            # Use pre-compiled patterns for cleaning
             cleaned_content = content
-            for pattern in command_patterns:
-                cleaned_content = re.sub(pattern, '', cleaned_content, flags=re.IGNORECASE)
+            for pattern in self._compiled_patterns.values():
+                if pattern != self._compiled_patterns['image_code']:  # Don't remove image codes
+                    cleaned_content = pattern.sub('', cleaned_content)
             
             # Remove empty lines that might have been left
             lines = cleaned_content.split('\n')
@@ -437,9 +470,20 @@ class ImageHandler(FileSystemEventHandler):
                 elif cleaned_lines and cleaned_lines[-1].strip():  # Keep one empty line after content
                     cleaned_lines.append(line)
             
+            return '\n'.join(cleaned_lines)
+                    
+        except Exception as e:
+            self.log(f"Error cleaning commands from content: {str(e)}", "ERROR")
+            return content
+    
+    def clean_note_commands(self, note_path, content):
+        """Remove processed commands from the note (legacy method for compatibility)"""
+        try:
+            cleaned_content = self._clean_commands_from_content(content)
+            
             if cleaned_content != content:
                 with open(note_path, 'w', encoding='utf-8') as f:
-                    f.write('\n'.join(cleaned_lines))
+                    f.write(cleaned_content)
                 self.log(f"Cleaned commands from {note_path.name}", "INFO")
                     
         except Exception as e:
