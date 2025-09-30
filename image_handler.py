@@ -209,22 +209,30 @@ class ImageHandler(FileSystemEventHandler):
             # Cache miss or invalid - do full search
             self.log("Performing full note search (cache miss)", "DEBUG")
             
-            # Search for all .md files in the vault
+            # Use os.walk for faster directory traversal with skipping
             md_files = []
-            search_path = self.obsidian_vault_path
+            skip_dirs = {'.git', '.obsidian'}
             
             if self.options.get('recursive', True):
-                pattern = '**/*.md'
+                for root, dirs, files in os.walk(self.obsidian_vault_path):
+                    # Skip unwanted directories in-place (modifies dirs list)
+                    dirs[:] = [d for d in dirs if d not in skip_dirs]
+                    
+                    # Process .md files in current directory
+                    for file in files:
+                        if file.endswith('.md'):
+                            # Skip .excalidraw.md files if requested
+                            if self.options.get('skip_excalidraw', True) and file.endswith('.excalidraw.md'):
+                                continue
+                            md_files.append(Path(root) / file)
             else:
-                pattern = '*.md'
-                
-            for md_file in search_path.glob(pattern):
-                # Skip .excalidraw.md files if requested
-                if self.options.get('skip_excalidraw', True) and md_file.name.endswith('.excalidraw.md'):
-                    continue
-                # Double check the file extension
-                if md_file.suffix.lower() == '.md':
-                    md_files.append(md_file)
+                # Non-recursive: only check immediate directory
+                for file in self.obsidian_vault_path.iterdir():
+                    if file.is_file() and file.suffix.lower() == '.md':
+                        # Skip .excalidraw.md files if requested
+                        if self.options.get('skip_excalidraw', True) and file.name.endswith('.excalidraw.md'):
+                            continue
+                        md_files.append(file)
             
             if not md_files:
                 raise Exception(f"No markdown (.md) files found in vault")
