@@ -1,5 +1,7 @@
 import time
 import threading
+import ctypes
+from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 from pathlib import Path
@@ -12,6 +14,7 @@ from theme_manager import ModernThemeManager
 
 
 class ImageProcessorGUI:
+    HOTKEY_ID = 1
     def __init__(self, root):
         self.root = root
         self.root.title("Obsidian Image Processor")
@@ -32,13 +35,75 @@ class ImageProcessorGUI:
         self.observer = None
         self.handler = None  # Keep reference to handler
         self.is_running = False
+
+        self._hotkey_thread = None
+        self._hotkey_running = False
         
         self.setup_ui()
         self.load_settings()
+
+        # start global hotkey listener (Windows)
+        try:
+            self.start_global_hotkey()
+        except Exception:
+            # fail silently if OS not supported or registration fails
+            self.log_message("Global hotkey not available", "WARNING")
+
         
         # Bind override prefix changes to update handler dynamically
         self.settings['override_prefix'].trace('w', self.on_override_prefix_change)
     
+    def start_global_hotkey(self):
+        """Start a background message loop and register Ctrl+Alt+A as a global hotkey (Windows)."""
+        if self._hotkey_thread and self._hotkey_thread.is_alive():
+            return
+
+        def _hotkey_loop():
+            user32 = ctypes.windll.user32
+            WM_HOTKEY = 0x0312
+            MOD_ALT = 0x0001
+            MOD_CONTROL = 0x0002
+            VK_A = 0x41
+
+            # Register the hotkey for the calling thread
+            if not user32.RegisterHotKey(None, self.HOTKEY_ID, MOD_CONTROL | MOD_ALT, VK_A):
+                # registration failed (maybe already in use)
+                self.root.after(0, lambda: self.log_message("Failed to register global hotkey (Ctrl+Alt+A).", "WARNING"))
+                return
+
+            msg = wintypes.MSG()
+            # message loop will block on GetMessageW
+            while self._hotkey_running:
+                res = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+                if res == 0:  # WM_QUIT posted
+                    break
+                if res == -1:
+                    break
+                if msg.message == WM_HOTKEY and msg.wParam == self.HOTKEY_ID:
+                    # schedule toggle on the tkinter thread
+                    self.root.after(0, self.toggle_monitoring)
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+
+            user32.UnregisterHotKey(None, self.HOTKEY_ID)
+
+        self._hotkey_running = True
+        self._hotkey_thread = threading.Thread(target=_hotkey_loop, daemon=True)
+        self._hotkey_thread.start()
+
+    def stop_global_hotkey(self):
+        """Stop the hotkey message loop and unregister the hotkey."""
+        if not self._hotkey_thread:
+            return
+        self._hotkey_running = False
+        try:
+            # Post WM_QUIT to unblock GetMessageW in the hotkey thread
+            WM_QUIT = 0x0012
+            ctypes.windll.user32.PostThreadMessageW(self._hotkey_thread.ident, WM_QUIT, 0, 0)
+        except Exception:
+            pass
+        self._hotkey_thread = None
+
     def _create_settings_variables(self):
         """Create tkinter variables for all settings"""
         defaults = SettingsManager.get_default_settings()
@@ -180,6 +245,8 @@ class ImageProcessorGUI:
             style='Primary.TButton'
         )
         self.start_button.pack(side="left", padx=(0, 6))
+
+        self.start_button.bind("<Control-Alt-a>", lambda e: self.toggle_monitoring())
         
         ttk.Button(
             button_frame, 
@@ -423,8 +490,10 @@ def main():
         if app.is_running:
             if messagebox.askokcancel("Quit", "Monitoring is still running. Do you want to stop and exit?"):
                 app.stop_monitoring()
+                app.stop_global_hotkey()
                 root.destroy()
         else:
+            app.stop_global_hotkey()
             root.destroy()
     
     root.protocol("WM_DELETE_WINDOW", on_closing)
