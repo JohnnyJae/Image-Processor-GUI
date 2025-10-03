@@ -117,27 +117,76 @@ class ImageHandler(FileSystemEventHandler):
         except:
             return False
     
-    def _wait_for_file_ready(self, path, timeout=None, poll_interval=0.15, stable_reads=3):
-        """Wait until file exists and size is stable to avoid race with producer process."""
+    def _wait_for_file_ready(self, path, timeout=None):
+        """
+        Adaptive, low-latency readiness check.
+        Returns True as soon as we see two consecutive identical non-zero sizes.
+        Falls back to total timeout if the producer is slow.
+        """
         timeout = timeout or self.options.get('file_ready_timeout', 5)
+        strategy = self.options.get('file_ready_strategy', 'adaptive')  # 'adaptive' | 'blocking'
+        if strategy == 'blocking_legacy':
+            # Optional legacy behavior (if you want to switch back)
+            poll_interval = self.options.get('file_ready_poll', 0.15)
+            stable_reads = self.options.get('file_ready_stable_reads', 3)
+            start = time.time()
+            last_size = -1
+            stable = 0
+            while time.time() - start < timeout:
+                if path.exists():
+                    try:
+                        size = path.stat().st_size
+                    except OSError:
+                        size = -1
+                    if size > 0 and size == last_size:
+                        stable += 1
+                        if stable >= stable_reads:
+                            return True
+                    else:
+                        stable = 0
+                        last_size = size
+                time.sleep(poll_interval)
+            return False
+
+        # Adaptive fast path
         start = time.time()
         last_size = -1
-        stable = 0
-        while time.time() - start < timeout:
-            if path.exists():
-                try:
-                    size = path.stat().st_size
-                except OSError:
-                    size = -1
-                if size > 0 and size == last_size:
-                    stable += 1
-                    if stable >= stable_reads:
+        consecutive_same = 0
+        attempt = 0
+        # Tunables
+        max_attempts = self.options.get('file_ready_attempts', 12)
+        base_sleep = self.options.get('file_ready_base_sleep', 0.04)  # 40 ms
+        max_sleep = self.options.get('file_ready_max_sleep', 0.25)
+        small_file_cutoff = self.options.get('file_ready_small_kb', 500) * 1024  # treat small files more aggressively
+
+        while time.time() - start < timeout and attempt < max_attempts:
+            if not path.exists():
+                time.sleep(base_sleep)
+                attempt += 1
+                continue
+
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = -1
+
+            if size > 0:
+                if size == last_size:
+                    consecutive_same += 1
+                    # For small files, one stable confirmation is enough; for larger, need two
+                    if (size <= small_file_cutoff and consecutive_same >= 1) or consecutive_same >= 2:
                         return True
                 else:
-                    stable = 0
+                    consecutive_same = 0
                     last_size = size
-            time.sleep(poll_interval)
-        return False
+
+            # Exponential-ish backoff but capped
+            sleep_time = min(base_sleep * (1.4 ** attempt), max_sleep)
+            time.sleep(sleep_time)
+            attempt += 1
+
+        # Final existence check (better to try than to block further)
+        return path.exists()
 
     def convert_to_jpg(self, image_path, note_commands=None):
         """Convert image to JPG format if it's not already JPG. Returns (final_path, converted_bool)."""
@@ -148,7 +197,11 @@ class ImageHandler(FileSystemEventHandler):
             self.log(f"JPG conversion disabled, skipping {image_path.name}", "DEBUG")
             return image_path, False
 
-        # Wait for file readiness first
+        # Fast skip: if already jpg, no readiness wait needed
+        if image_path.suffix.lower() in ('.jpg', '.jpeg'):
+            self.log(f"Image {image_path.name} already JPG", "DEBUG")
+            return image_path, False
+
         if not self._wait_for_file_ready(image_path):
             self.log(f"File not ready for conversion (timeout): {image_path.name}", "ERROR")
             return image_path, False
@@ -384,12 +437,19 @@ class ImageHandler(FileSystemEventHandler):
         self.log(f"Processing new image: {original_path}", "INFO")
 
         if not self.options.get('add_to_note', True):
-            self.convert_to_jpg(original_path)  # ignore success flag
+            # Only wait if we will convert
+            if self.options.get('convert_jpg', True) and original_path.suffix.lower() not in ('.jpg', '.jpeg'):
+                self._wait_for_file_ready(original_path)
+            self.convert_to_jpg(original_path)
             self.log("Note insertion disabled, processing complete", "INFO")
             return
 
-        # Ensure file is ready (even if not converting)
-        if not self._wait_for_file_ready(original_path):
+        # Only apply readiness wait if conversion needed or renaming requested.
+        needs_wait = (
+            (self.options.get('convert_jpg', True) and original_path.suffix.lower() not in ('.jpg', '.jpeg'))
+            or self.options.get('auto_rename', True)
+        )
+        if needs_wait and not self._wait_for_file_ready(original_path):
             self.log(f"File not ready, aborting processing: {original_path.name}", "ERROR")
             return
 
