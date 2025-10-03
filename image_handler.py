@@ -117,47 +117,61 @@ class ImageHandler(FileSystemEventHandler):
         except:
             return False
     
+    def _wait_for_file_ready(self, path, timeout=None, poll_interval=0.15, stable_reads=3):
+        """Wait until file exists and size is stable to avoid race with producer process."""
+        timeout = timeout or self.options.get('file_ready_timeout', 5)
+        start = time.time()
+        last_size = -1
+        stable = 0
+        while time.time() - start < timeout:
+            if path.exists():
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    size = -1
+                if size > 0 and size == last_size:
+                    stable += 1
+                    if stable >= stable_reads:
+                        return True
+                else:
+                    stable = 0
+                    last_size = size
+            time.sleep(poll_interval)
+        return False
+
     def convert_to_jpg(self, image_path, note_commands=None):
-        """Convert image to JPG format if it's not already JPG"""
-        # Check if conversion is disabled globally or by note command
+        """Convert image to JPG format if it's not already JPG. Returns (final_path, converted_bool)."""
         convert_enabled = self.options.get('convert_jpg', True)
         if note_commands and 'convert' in note_commands:
             convert_enabled = note_commands['convert']
-            
         if not convert_enabled:
             self.log(f"JPG conversion disabled, skipping {image_path.name}", "DEBUG")
-            return image_path
-            
+            return image_path, False
+
+        # Wait for file readiness first
+        if not self._wait_for_file_ready(image_path):
+            self.log(f"File not ready for conversion (timeout): {image_path.name}", "ERROR")
+            return image_path, False
+
         try:
-            # Import here to avoid dependency if conversion is disabled
             from PIL import Image
-            
-            # Check if already JPG
             if image_path.suffix.lower() in ['.jpg', '.jpeg']:
-                self.log(f"Image {image_path.name} is already JPG format", "INFO")
-                return image_path
-            
+                self.log(f"Image {image_path.name} already JPG", "DEBUG")
+                return image_path, False
+
             self.log(f"Converting {image_path.name} to JPG format", "INFO")
-            
-            # Get quality from note commands or use default
             quality = note_commands.get('quality', self.options.get('jpg_quality', 95)) if note_commands else self.options.get('jpg_quality', 95)
             bg_color = note_commands.get('bg_color', self.options.get('bg_color', '#FFFFFF')) if note_commands else self.options.get('bg_color', '#FFFFFF')
-            
-            # Ensure bg_color starts with # for hex colors
             if not bg_color.startswith('#'):
                 bg_color = '#' + bg_color
-            
-            # Open the image
+
             with Image.open(image_path) as img:
-                # Convert to RGB if necessary (for PNG with transparency, etc.)
                 if img.mode in ('RGBA', 'LA', 'P'):
-                    # Create a background with specified color
                     try:
                         bg_rgb = tuple(int(bg_color[i:i+2], 16) for i in (1, 3, 5))
                     except ValueError:
-                        bg_rgb = (255, 255, 255)  # Default to white if color parsing fails
-                        self.log(f"Invalid background color {bg_color}, using white", "WARNING")
-                    
+                        bg_rgb = (255, 255, 255)
+                        self.log(f"Invalid bg color {bg_color}, using white", "WARNING")
                     background = Image.new('RGB', img.size, bg_rgb)
                     if img.mode == 'P':
                         img = img.convert('RGBA')
@@ -165,31 +179,29 @@ class ImageHandler(FileSystemEventHandler):
                     img = background
                 elif img.mode != 'RGB':
                     img = img.convert('RGB')
-                
-                # Create new filename with .jpg extension
+
                 jpg_path = image_path.with_suffix('.jpg')
-                
-                # Save as JPG with specified quality
                 img.save(jpg_path, 'JPEG', quality=quality, optimize=self.options.get('optimize_jpg', True))
-                
-                self.log(f"Saved converted image as {jpg_path.name} (quality: {quality}%)", "INFO")
-            
-            # Delete the original file if requested
+                self.log(f"Saved converted image as {jpg_path.name} (quality {quality}%)", "INFO")
+
             if self.options.get('delete_original', True):
                 try:
                     image_path.unlink()
-                    self.log(f"Deleted original file {image_path.name}", "INFO")
+                    self.log(f"Deleted original file {image_path.name}", "DEBUG")
                 except Exception as e:
-                    self.log(f"Could not delete original file {image_path.name}: {str(e)}", "WARNING")
-            
-            return jpg_path
-            
+                    self.log(f"Could not delete original {image_path.name}: {e}", "WARNING")
+
+            return jpg_path, True
+
         except ImportError:
-            self.log("Pillow library is required for JPG conversion but not installed", "ERROR")
-            return image_path
+            self.log("Pillow not installed; cannot convert to JPG", "ERROR")
+            return image_path, False
+        except FileNotFoundError:
+            self.log(f"File vanished before conversion: {image_path}", "ERROR")
+            return image_path, False
         except Exception as e:
-            self.log(f"Error converting {image_path.name} to JPG: {str(e)}", "ERROR")
-            return image_path
+            self.log(f"Error converting {image_path.name} to JPG: {e}", "ERROR")
+            return image_path, False
     
     def get_last_modified_note(self):
         """Find the most recently modified .md file in the vault with caching"""
@@ -367,98 +379,84 @@ class ImageHandler(FileSystemEventHandler):
         return effective_prefix, highest_number
     
     def process_image(self, original_path):
-        """Main processing function with optimized file I/O"""
+        """Main processing function with optimized file I/O and safer conversion."""
         start_time = time.time()
         self.log(f"Processing new image: {original_path}", "INFO")
-        
+
         if not self.options.get('add_to_note', True):
-            # Still convert if enabled, but don't process notes
-            processed_path = self.convert_to_jpg(original_path)
+            self.convert_to_jpg(original_path)  # ignore success flag
             self.log("Note insertion disabled, processing complete", "INFO")
             return
-        
-        # Get the last modified note
+
+        # Ensure file is ready (even if not converting)
+        if not self._wait_for_file_ready(original_path):
+            self.log(f"File not ready, aborting processing: {original_path.name}", "ERROR")
+            return
+
         note_path = self.get_last_modified_note()
-        
-        # Read note content ONCE
         with open(note_path, 'r', encoding='utf-8') as f:
             original_content = f.read()
-        
-        # Parse commands from the note
+
         note_commands = self.parse_note_commands(original_content)
         if note_commands:
-            self.log(f"Applied note commands: {note_commands}", "INFO")
-        
-        # Convert to JPG if enabled (considering note commands)
-        processed_path = self.convert_to_jpg(original_path, note_commands)
-        
-        # Extract prefix and highest number (considering note commands, override, and automatic prefix)
+            self.log(f"Applied note commands: {note_commands}", "DEBUG")
+
+        processed_path, converted = self.convert_to_jpg(original_path, note_commands)
+
+        # If conversion failed and original still missing, abort
+        if not processed_path.exists():
+            self.log(f"Abort: source file missing after conversion attempt: {original_path.name}", "ERROR")
+            return
+
         prefix, highest_number = self.extract_prefix_and_highest_number(original_content, note_commands, note_path)
-        
-        # Check if renaming is enabled (globally or by note command)
+
         auto_rename = self.options.get('auto_rename', True)
         if note_commands and 'rename' in note_commands:
             auto_rename = note_commands['rename']
-        
-        # Check if numbering is enabled (globally or by note command)
+
         auto_numbering = self.options.get('auto_numbering', True)
         if note_commands and 'numbering' in note_commands:
             auto_numbering = note_commands['numbering']
-        
-        # Generate new filename
+
+        # Only force .jpg if conversion actually succeeded
+        target_suffix = processed_path.suffix if not converted else '.jpg'
+
         if auto_numbering:
             new_number = highest_number + 1
-            file_extension = '.jpg' if (self.options.get('convert_jpg', True) or (note_commands and note_commands.get('convert'))) else processed_path.suffix
-            new_filename = f"{prefix}_{new_number}{file_extension}"
+            new_filename = f"{prefix}_{new_number}{target_suffix}"
         else:
-            # Use original name or simple incremental naming
-            file_extension = '.jpg' if (self.options.get('convert_jpg', True) or (note_commands and note_commands.get('convert'))) else processed_path.suffix
-            new_filename = f"{prefix}_{int(time.time())}{file_extension}"
-        
+            new_filename = f"{prefix}_{int(time.time())}{target_suffix}"
+
         new_path = processed_path.parent / new_filename
-        
-        # Rename the file if auto-renaming is enabled
+
         if auto_rename:
             try:
-                processed_path.rename(new_path)
-                self.log(f"Renamed {processed_path.name} to {new_filename}", "INFO")
+                if processed_path.name != new_filename:
+                    processed_path.rename(new_path)
+                    self.log(f"Renamed {processed_path.name} -> {new_filename}", "INFO")
                 final_filename = new_filename
             except Exception as e:
-                self.log(f"Error renaming file: {str(e)}", "ERROR")
+                self.log(f"Error renaming file ({processed_path.name}): {e}", "ERROR")
                 final_filename = processed_path.name
         else:
             final_filename = processed_path.name
-        
-        # Generate image code with custom format (from note commands or options)
+
         image_format = note_commands.get('format') if note_commands else self.options.get('image_format', "[[File:{filename}]]")
-        if image_format:
-            image_code = image_format.replace('{filename}', final_filename)
-        else:
-            image_code = f"[[File:{final_filename}]]"
-        
-        # Use separator from note commands or options
+        image_code = image_format.replace('{filename}', final_filename) if image_format else f"[[File:{final_filename}]]"
+
         separator_text = note_commands.get('separator') if note_commands and 'separator' in note_commands else self.options.get('separator', '')
         separator = '\n' + separator_text if separator_text else '\n'
-        
-        # Prepare final content for single write operation
+
         final_content = original_content
-        
-        # Clean up processed commands if requested (modify content before writing)
         if note_commands and self.options.get('clean_commands', False):
             final_content = self._clean_commands_from_content(final_content)
-        
-        # Add image code to final content
         final_content += f"{separator}{image_code}"
-        
-        # Write everything in ONE operation
+
         with open(note_path, 'w', encoding='utf-8') as f:
             f.write(final_content)
-        
-        # Invalidate note cache since we modified the file
+
         self._note_cache_valid = False
-        
-        processing_time = time.time() - start_time
-        self.log(f"Added {image_code} to {note_path.name} (processed in {processing_time:.2f}s)", "INFO")
+        self.log(f"Added {image_code} to {note_path.name} (processed in {time.time() - start_time:.2f}s)", "INFO")
 
     def _clean_commands_from_content(self, content):
         """Remove processed commands from content (internal helper)"""
