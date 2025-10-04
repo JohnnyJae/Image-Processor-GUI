@@ -5,6 +5,8 @@ import logging
 from pathlib import Path
 from watchdog.events import FileSystemEventHandler
 import mimetypes
+import threading
+import queue
 
 
 class ImageHandler(FileSystemEventHandler):
@@ -20,12 +22,45 @@ class ImageHandler(FileSystemEventHandler):
         self._cached_note_path = None
         self._cached_note_mtime = 0
         self._note_cache_valid = False
+        self._cached_note_content = None
+        self._cached_note_content_mtime = 0
         
         # Pre-compile regex patterns for better performance
         self._compiled_patterns = self._compile_regex_patterns()
         
         # Setup logging
         self.logger = logging.getLogger(__name__)
+        
+        # Async / worker
+        self.async_enabled = self.options.get('async_processing', True)
+        if self.async_enabled:
+            self._work_queue = queue.Queue()
+            self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+            self._worker_thread.start()
+    
+    def is_image_file(self, path: Path):
+        """
+        Fast image file check.
+        Extension whitelist first (cheap), then optional mimetype fallback.
+        """
+        if not isinstance(path, Path):
+            path = Path(path)
+        ext = path.suffix.lower()
+        # Allow common raster formats (add more if needed)
+        if ext in {
+            '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp',
+            '.tiff', '.tif', '.avif', '.heic', '.heif'
+        }:
+            return True
+        # Skip obvious non-image (markdown, temp, etc.)
+        if ext in {'.md', '.txt', ''}:
+            return False
+        # Optional: mimic type check (can be disabled via option)
+        if self.options.get('mimetype_fallback', True):
+            mtype, _ = mimetypes.guess_type(str(path))
+            if mtype and mtype.startswith('image/'):
+                return True
+        return False
         
     def _compile_regex_patterns(self):
         """Pre-compile regex patterns for better performance"""
@@ -87,6 +122,28 @@ class ImageHandler(FileSystemEventHandler):
         self.log(f"Built automatic prefix: {final_prefix} (user: '{user_prefix}', subprefix: '{subprefix}')", "INFO")
         return final_prefix
         
+    def _worker_loop(self):
+        """Background worker to decouple filesystem event latency from processing."""
+        while True:
+            path = self._work_queue.get()
+            if path is None:
+                return
+            try:
+                # Small debounce/coalesce: if multiple same path arrive quickly, drain extras
+                try:
+                    while True:
+                        nxt = self._work_queue.get_nowait()
+                        if nxt != path:
+                            self._work_queue.put(nxt)
+                            break
+                except queue.Empty:
+                    pass
+                self.process_image(path)
+            except Exception as e:
+                self.log(f"Worker error: {e}", "ERROR")
+            finally:
+                self._work_queue.task_done()
+
     def on_created(self, event):
         if event.is_directory:
             return
@@ -103,28 +160,62 @@ class ImageHandler(FileSystemEventHandler):
         if not self.is_image_file(file_path):
             return
             
+        self.last_processed_time = current_time
+        if self.async_enabled:
+            self._work_queue.put(file_path)
+        else:
+            try:
+                self.process_image(file_path)
+            except Exception as e:
+                self.log(f"Error processing {file_path}: {str(e)}", "ERROR")
+
+    def _attempt_pillow_probe(self, path):
+        """Fast probe to see if file is already a valid image."""
         try:
-            self.process_image(file_path)
-            self.last_processed_time = current_time
-        except Exception as e:
-            self.log(f"Error processing {file_path}: {str(e)}", "ERROR")
-    
-    def is_image_file(self, file_path):
-        """Check if the file is an image based on MIME type"""
-        try:
-            mime_type, _ = mimetypes.guess_type(str(file_path))
-            return mime_type and mime_type.startswith('image/')
-        except:
+            from PIL import Image
+            with Image.open(path) as img:
+                img.verify()
+            return True
+        except Exception:
             return False
-    
+
     def _wait_for_file_ready(self, path, timeout=None):
         """
-        Adaptive, low-latency readiness check.
-        Returns True as soon as we see two consecutive identical non-zero sizes.
-        Falls back to total timeout if the producer is slow.
+        Strategies:
+          ultra: fastest. Try immediate open + short micro-backoff (good for small screen captures).
+          adaptive (default): previous adaptive logic.
+          blocking_legacy: original slower stable-size method.
         """
+        strategy = self.options.get('file_ready_strategy', 'adaptive')
         timeout = timeout or self.options.get('file_ready_timeout', 5)
-        strategy = self.options.get('file_ready_strategy', 'adaptive')  # 'adaptive' | 'blocking'
+
+        if strategy == 'ultra':
+            base_sleep = self.options.get('file_ready_base_sleep', 0.02)
+            max_attempts = self.options.get('file_ready_attempts', 8)
+            last_size = -1
+            consecutive_same = 0
+            for attempt in range(max_attempts):
+                if not path.exists():
+                    time.sleep(base_sleep)
+                    continue
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    size = -1
+                if size > 0:
+                    # Pillow probe first (cheap fail-fast)
+                    if self._attempt_pillow_probe(path):
+                        return True
+                    if size == last_size:
+                        consecutive_same += 1
+                        if consecutive_same >= 1:  # single stable read
+                            return True
+                    else:
+                        consecutive_same = 0
+                        last_size = size
+                time.sleep(min(base_sleep * (1.3 ** attempt), 0.12))
+            return path.exists()
+
         if strategy == 'blocking_legacy':
             # Optional legacy behavior (if you want to switch back)
             poll_interval = self.options.get('file_ready_poll', 0.15)
@@ -148,6 +239,7 @@ class ImageHandler(FileSystemEventHandler):
                 time.sleep(poll_interval)
             return False
 
+        # adaptive (existing)
         # Adaptive fast path
         start = time.time()
         last_size = -1
@@ -454,9 +546,20 @@ class ImageHandler(FileSystemEventHandler):
             return
 
         note_path = self.get_last_modified_note()
-        with open(note_path, 'r', encoding='utf-8') as f:
-            original_content = f.read()
 
+        # Cached note content optimization
+        content_mtime = note_path.stat().st_mtime
+        use_cache = self.options.get('note_content_cache', True)
+        if use_cache and self._cached_note_content and self._cached_note_content_mtime == content_mtime and self._note_cache_valid:
+            original_content = self._cached_note_content
+            self.log("Reusing cached note content", "DEBUG")
+        else:
+            with open(note_path, 'r', encoding='utf-8') as f:
+                original_content = f.read()
+            if use_cache:
+                self._cached_note_content = original_content
+                self._cached_note_content_mtime = content_mtime
+                self._note_cache_valid = True
         note_commands = self.parse_note_commands(original_content)
         if note_commands:
             self.log(f"Applied note commands: {note_commands}", "DEBUG")
@@ -514,8 +617,12 @@ class ImageHandler(FileSystemEventHandler):
 
         with open(note_path, 'w', encoding='utf-8') as f:
             f.write(final_content)
-
-        self._note_cache_valid = False
+        # Update content cache instantly (avoid re-read on next image)
+        if self.options.get('note_content_cache', True):
+            self._cached_note_content = final_content
+            self._cached_note_content_mtime = note_path.stat().st_mtime
+            self._note_cache_valid = True
+        self._note_cache_valid = False  # existing invalidation (can remove if relying on content cache)
         self.log(f"Added {image_code} to {note_path.name} (processed in {time.time() - start_time:.2f}s)", "INFO")
 
     def _clean_commands_from_content(self, content):
