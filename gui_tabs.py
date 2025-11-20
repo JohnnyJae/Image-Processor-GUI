@@ -183,6 +183,9 @@ class MainSettingsTab:
         ttk.Checkbutton(options_content, text="📝 Add image code to note", 
                        variable=self.settings['add_to_note'],
                        style='Modern.TCheckbutton').pack(anchor="w", pady=3)
+        ttk.Checkbutton(options_content, text="📋 Clipboard Mode (Copy code instead of pasting)", 
+                       variable=self.settings['clipboard_mode'],
+                       style='Modern.TCheckbutton').pack(anchor="w", pady=3)
         ttk.Checkbutton(options_content, text="🏷️ Auto-rename files", 
                        variable=self.settings['auto_rename'],
                        style='Modern.TCheckbutton').pack(anchor="w", pady=3)

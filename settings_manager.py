@@ -30,6 +30,7 @@ class SettingsManager:
             'clean_commands': False,
             'cooldown': 2.0,
             'enable_note_commands': True,
+            'clipboard_mode': False,
             'dark_theme': False
         }
     

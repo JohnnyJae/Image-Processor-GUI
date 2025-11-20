@@ -15,6 +15,7 @@ from theme_manager import ModernThemeManager
 
 class ImageProcessorGUI:
     HOTKEY_ID = 1
+    HOTKEY_ID_CLIPBOARD = 2
     def __init__(self, root):
         self.root = root
         self.root.title("Obsidian Image Processor")
@@ -53,8 +54,20 @@ class ImageProcessorGUI:
         # Bind override prefix changes to update handler dynamically
         self.settings['override_prefix'].trace('w', self.on_override_prefix_change)
     
+    def copy_to_clipboard(self, text):
+        """Thread-safe clipboard copy"""
+        self.root.after(0, lambda: self._copy_to_clipboard_main_thread(text))
+        
+    def _copy_to_clipboard_main_thread(self, text):
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.root.update()
+        except Exception as e:
+            self.log_message(f"Failed to copy to clipboard: {e}", "ERROR")
+
     def start_global_hotkey(self):
-        """Start a background message loop and register Ctrl+Alt+A as a global hotkey (Windows)."""
+        """Start a background message loop and register Ctrl+Alt+A and Ctrl+Alt+D as global hotkeys (Windows)."""
         if self._hotkey_thread and self._hotkey_thread.is_alive():
             return
 
@@ -64,12 +77,15 @@ class ImageProcessorGUI:
             MOD_ALT = 0x0001
             MOD_CONTROL = 0x0002
             VK_A = 0x41
+            VK_D = 0x44
 
-            # Register the hotkey for the calling thread
+            # Register Ctrl+Alt+A (Normal Mode)
             if not user32.RegisterHotKey(None, self.HOTKEY_ID, MOD_CONTROL | MOD_ALT, VK_A):
-                # registration failed (maybe already in use)
                 self.root.after(0, lambda: self.log_message("Failed to register global hotkey (Ctrl+Alt+A).", "WARNING"))
-                return
+            
+            # Register Ctrl+Alt+D (Clipboard Mode)
+            if not user32.RegisterHotKey(None, self.HOTKEY_ID_CLIPBOARD, MOD_CONTROL | MOD_ALT, VK_D):
+                self.root.after(0, lambda: self.log_message("Failed to register global hotkey (Ctrl+Alt+D).", "WARNING"))
 
             msg = wintypes.MSG()
             # message loop will block on GetMessageW
@@ -79,13 +95,18 @@ class ImageProcessorGUI:
                     break
                 if res == -1:
                     break
-                if msg.message == WM_HOTKEY and msg.wParam == self.HOTKEY_ID:
-                    # schedule toggle on the tkinter thread
-                    self.root.after(0, self.toggle_monitoring)
+                if msg.message == WM_HOTKEY:
+                    if msg.wParam == self.HOTKEY_ID:
+                        # schedule toggle normal on the tkinter thread
+                        self.root.after(0, lambda: self.toggle_monitoring_mode(clipboard=False))
+                    elif msg.wParam == self.HOTKEY_ID_CLIPBOARD:
+                        # schedule toggle clipboard on the tkinter thread
+                        self.root.after(0, lambda: self.toggle_monitoring_mode(clipboard=True))
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
 
             user32.UnregisterHotKey(None, self.HOTKEY_ID)
+            user32.UnregisterHotKey(None, self.HOTKEY_ID_CLIPBOARD)
 
         self._hotkey_running = True
         self._hotkey_thread = threading.Thread(target=_hotkey_loop, daemon=True)
@@ -318,6 +339,22 @@ class ImageProcessorGUI:
         else:
             self.stop_monitoring()
             
+    def toggle_monitoring_mode(self, clipboard=False):
+        """Toggle monitoring with specific mode preference"""
+        was_running = self.is_running
+        was_clipboard = self.settings['clipboard_mode'].get()
+        
+        # Update the setting to the requested mode
+        self.settings['clipboard_mode'].set(clipboard)
+        
+        if was_running:
+            self.stop_monitoring()
+            # If we were running in a different mode, restart in the new mode
+            if was_clipboard != clipboard:
+                self.root.after(200, self.start_monitoring) # Small delay to ensure clean stop
+        else:
+            self.start_monitoring()
+    
     def start_monitoring(self):
         """Start the file monitoring process"""
         try:
@@ -352,7 +389,8 @@ class ImageProcessorGUI:
             
             # Create handler and observer
             self.handler = ImageHandler(vault_path, self.settings['default_prefix'].get(), 
-                                       options, log_callback=self.log_message)
+                                       options, log_callback=self.log_message,
+                                       clipboard_callback=self.copy_to_clipboard)
             self.observer = Observer()
             self.observer.schedule(self.handler, images_folder, recursive=False)
             
@@ -362,11 +400,15 @@ class ImageProcessorGUI:
             self.is_running = True
             self.start_button.config(text="⏹️ Stop Monitoring", style='Danger.TButton')
             self.status_badge.destroy()
+            status_text = "▶️ Running (Clipboard)" if self.settings['clipboard_mode'].get() else "▶️ Running"
             self.status_badge = self.theme.create_status_badge(
-                self.status_badge.master, "▶️ Running", "success"
+                self.status_badge.master, status_text, "success"
             )
             self.status_badge.pack()
             self.log_message("🚀 Started monitoring " + images_folder)
+            
+            if self.settings['clipboard_mode'].get():
+                self.log_message("📋 Clipboard Mode Active: Image codes will be copied to clipboard", "INFO")
             
             # Log the current override prefix status
             override_value = self.settings['override_prefix'].get().strip()

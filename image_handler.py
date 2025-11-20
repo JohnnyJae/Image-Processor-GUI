@@ -10,13 +10,14 @@ import queue
 
 
 class ImageHandler(FileSystemEventHandler):
-    def __init__(self, obsidian_vault_path, default_prefix, options, log_callback=None):
+    def __init__(self, obsidian_vault_path, default_prefix, options, log_callback=None, clipboard_callback=None):
         self.obsidian_vault_path = Path(obsidian_vault_path)
         self.default_prefix = default_prefix
         self.options = options
         self.last_processed_time = 0
         self.cooldown_seconds = options.get('cooldown', 2.0)
         self.log_callback = log_callback
+        self.clipboard_callback = clipboard_callback
         
         # Performance optimizations
         self._cached_note_path = None
@@ -528,7 +529,7 @@ class ImageHandler(FileSystemEventHandler):
         start_time = time.time()
         self.log(f"Processing new image: {original_path}", "INFO")
 
-        if not self.options.get('add_to_note', True):
+        if not self.options.get('add_to_note', True) and not self.options.get('clipboard_mode', False):
             # Only wait if we will convert
             if self.options.get('convert_jpg', True) and original_path.suffix.lower() not in ('.jpg', '.jpeg'):
                 self._wait_for_file_ready(original_path)
@@ -606,6 +607,14 @@ class ImageHandler(FileSystemEventHandler):
 
         image_format = note_commands.get('format') if note_commands else self.options.get('image_format', "[[File:{filename}]]")
         image_code = image_format.replace('{filename}', final_filename) if image_format else f"[[File:{final_filename}]]"
+
+        if self.options.get('clipboard_mode', False):
+            if self.clipboard_callback:
+                self.clipboard_callback(image_code)
+                self.log(f"Copied {image_code} to clipboard", "SUCCESS")
+            else:
+                self.log(f"Clipboard mode enabled but no callback provided. Code: {image_code}", "WARNING")
+            return
 
         separator_text = note_commands.get('separator') if note_commands and 'separator' in note_commands else self.options.get('separator', '')
         separator = '\n' + separator_text if separator_text else '\n'
