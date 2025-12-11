@@ -9,7 +9,7 @@ from watchdog.observers import Observer
 
 from image_handler import ImageHandler
 from settings_manager import SettingsManager
-from gui_tabs import MainSettingsTab, ImageProcessingTab, NoteProcessingTab, NoteCommandsTab
+from gui_tabs import MainSettingsTab, ImageProcessingTab, NoteProcessingTab, NoteCommandsTab, RecentImagesTab
 from theme_manager import ModernThemeManager
 
 
@@ -239,6 +239,11 @@ class ImageProcessorGUI:
         commands_tab = tk.Frame(notebook, bg=self.theme.colors['bg_primary'])
         notebook.add(commands_tab, text="⚡ Commands")
         NoteCommandsTab(commands_tab, self.settings, self.note_commands, self.log_message, self.theme)
+        
+        # Recent Images Tab (New)
+        recent_tab = tk.Frame(notebook, bg=self.theme.colors['bg_primary'])
+        notebook.add(recent_tab, text="🕒 Recent Images")
+        RecentImagesTab(recent_tab, self, self.theme)
         
         # Control Panel at bottom
         self.setup_control_panel(main_container)

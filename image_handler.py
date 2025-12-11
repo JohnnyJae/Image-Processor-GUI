@@ -29,6 +29,9 @@ class ImageHandler(FileSystemEventHandler):
         # Pre-compile regex patterns for better performance
         self._compiled_patterns = self._compile_regex_patterns()
         
+        # History tracking for Recent Images feature
+        self.history = []
+        
         # Setup logging
         self.logger = logging.getLogger(__name__)
         
@@ -632,6 +635,18 @@ class ImageHandler(FileSystemEventHandler):
             self._note_cache_valid = True
         self._note_cache_valid = False  # existing invalidation (can remove if relying on content cache)
         self.log(f"Added {image_code} to {note_path.name} (processed in {time.time() - start_time:.2f}s)", "INFO")
+        
+        # Add to history
+        self.history.insert(0, {
+            'original_path': original_path,
+            'current_path': new_path,
+            'image_code': image_code,
+            'note_path': note_path,
+            'timestamp': time.time()
+        })
+        # Keep history limited to e.g. 50 items
+        if len(self.history) > 50:
+            self.history.pop()
 
     def _clean_commands_from_content(self, content):
         """Remove processed commands from content (internal helper)"""

@@ -554,3 +554,151 @@ Note: Override Prefix will ignore the $prefix= command above."""
         state = self.settings['enable_note_commands'].get()
         if self.log_callback:
             self.log_callback(f"Note commands {'enabled' if state else 'disabled'}")
+
+
+class RecentImagesTab:
+    def __init__(self, parent, app, theme):
+        self.app = app
+        self.theme = theme
+        self.setup_ui(parent)
+        
+    def setup_ui(self, parent):
+        # Main layout
+        main_frame = tk.Frame(parent, bg=self.theme.colors['bg_primary'])
+        main_frame.pack(fill="both", expand=True, padx=15, pady=15)
+        
+        # Header / Controls
+        controls_frame = tk.Frame(main_frame, bg=self.theme.colors['bg_primary'])
+        controls_frame.pack(fill="x", pady=(0, 10))
+        
+        ttk.Button(controls_frame, text="🔄 Refresh List", 
+                  command=self.refresh_list,
+                  style='Modern.TButton').pack(side="left")
+                  
+        tk.Label(controls_frame, text="Select an image to rename (updates file and recent notes)", 
+                bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_secondary'],
+                font=('Segoe UI', 9)).pack(side="left", padx=15)
+                
+        # List area
+        list_frame = self.theme.create_card_frame(main_frame, "🕒 Recent Images")
+        list_frame.pack(fill="both", expand=True, pady=(0, 15))
+        
+        list_content = tk.Frame(list_frame, bg=self.theme.colors['bg_primary'])
+        list_content.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Treeview for columns
+        columns = ("filename", "time", "note")
+        self.tree = ttk.Treeview(list_content, columns=columns, show="headings", selectmode="browse")
+        
+        self.tree.heading("filename", text="Filename")
+        self.tree.heading("time", text="Time")
+        self.tree.heading("note", text="Added To")
+        
+        self.tree.column("filename", width=200)
+        self.tree.column("time", width=100)
+        self.tree.column("note", width=150)
+        
+        scrollbar = ttk.Scrollbar(list_content, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        self.tree.bind("<<TreeviewSelect>>", self.on_select)
+        
+        # Rename Area
+        rename_card = self.theme.create_card_frame(main_frame, "✏️ Rename Selected Image")
+        rename_card.pack(fill="x")
+        
+        rename_content = tk.Frame(rename_card, bg=self.theme.colors['bg_primary'])
+        rename_content.pack(fill="x", padx=15, pady=15)
+        
+        # Grid layout for rename form
+        tk.Label(rename_content, text="Current Name:", 
+                bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_primary'],
+                font=('Segoe UI', 9, 'bold')).grid(row=0, column=0, sticky="w", padx=5, pady=5)
+                
+        self.current_name_var = tk.StringVar()
+        tk.Label(rename_content, textvariable=self.current_name_var,
+                bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_secondary'],
+                font=('Segoe UI', 9)).grid(row=0, column=1, sticky="w", padx=5, pady=5)
+                
+        tk.Label(rename_content, text="New Name (no ext):", 
+                bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_primary'],
+                font=('Segoe UI', 9, 'bold')).grid(row=1, column=0, sticky="w", padx=5, pady=5)
+                
+        self.new_name_var = tk.StringVar()
+        self.new_name_entry = ttk.Entry(rename_content, textvariable=self.new_name_var, width=40,
+                                      font=('Segoe UI', 10), style='Modern.TEntry')
+        self.new_name_entry.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        
+        self.apply_btn = ttk.Button(rename_content, text="✅ Apply Rename", 
+                                  command=self.apply_rename,
+                                  style='Primary.TButton', state="disabled")
+        self.apply_btn.grid(row=1, column=2, padx=15, pady=5)
+        
+        self.status_label = tk.Label(rename_content, text="", 
+                                   bg=self.theme.colors['bg_primary'], fg=self.theme.colors['text_primary'],
+                                   font=('Segoe UI', 9))
+        self.status_label.grid(row=2, column=0, columnspan=3, sticky="w", padx=5, pady=(5, 0))
+
+    def refresh_list(self):
+        """Reload history from handler"""
+        # Clear current
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+            
+        if not self.app.handler:
+            self.status_label.config(text="Monitoring not running - history unavailable", fg="orange")
+            return
+            
+        import time
+        for i, item in enumerate(self.app.handler.history):
+            fname = item['current_path'].name
+            t_str = time.strftime("%H:%M:%S", time.localtime(item['timestamp']))
+            note = item['note_path'].name if item.get('note_path') else "-"
+            
+            # Store index in tag or iid
+            self.tree.insert("", "end", iid=str(i), values=(fname, t_str, note))
+            
+        self.status_label.config(text=f"Loaded {len(self.app.handler.history)} items", fg="green")
+        
+    def on_select(self, event):
+        """Populate fields on selection"""
+        selection = self.tree.selection()
+        if not selection:
+            return
+            
+        index = int(selection[0])
+        if self.app.handler and index < len(self.app.handler.history):
+            item = self.app.handler.history[index]
+            self.current_name_var.set(item['current_path'].name)
+            self.new_name_var.set(item['current_path'].stem) # Pre-fill with current stem
+            self.apply_btn.config(state="normal")
+            
+    def apply_rename(self):
+        """Execute rename"""
+        selection = self.tree.selection()
+        if not selection:
+            return
+            
+        index = int(selection[0])
+        new_stem = self.new_name_var.get().strip()
+        
+        if not new_stem:
+            self.status_label.config(text="Please enter a new name", fg="red")
+            return
+            
+        if not self.app.handler:
+             self.status_label.config(text="Handler not running", fg="red")
+             return
+             
+        # Call backend
+        success, msg = self.app.handler.rename_recent_item(index, new_stem)
+        
+        if success:
+            self.status_label.config(text=msg, fg="green")
+            self.new_name_var.set("")
+            self.refresh_list()
+        else:
+            self.status_label.config(text=msg, fg="red")
