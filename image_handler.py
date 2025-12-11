@@ -92,8 +92,7 @@ class ImageHandler(FileSystemEventHandler):
         """Create a subprefix from the note filename by removing non-alphanumeric chars and capitalizing words"""
         filename = note_path.stem  # Get filename without extension
         
-        # Remove non-alphanumeric characters and split into words
-        import string
+
         # Replace non-alphanumeric with spaces, then split
         cleaned = ''.join(c if c.isalnum() else ' ' for c in filename)
         words = cleaned.split()
