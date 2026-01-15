@@ -78,7 +78,7 @@ class ImageHandler(FileSystemEventHandler):
             'rename': re.compile(r'\$rename=(true|false|on|off|yes|no)', re.IGNORECASE),
             'numbering': re.compile(r'\$num(?:bering)?=(true|false|on|off|yes|no)', re.IGNORECASE),
             'bg_color': re.compile(r'\$bg(?:_?color)?=([#\w]+)', re.IGNORECASE),
-            'image_code': re.compile(r'\[\[File:([^_]+)_(\d+)\.[^|\]]+(?:\|[^\]]+)?\]\]')
+            'image_code': re.compile(r'\[\[File:(.+?)_(\d+)\.[^|\]]+(?:\|[^\]]+)?\]\]')
         }
         
     def update_options(self, new_options):
@@ -139,7 +139,7 @@ class ImageHandler(FileSystemEventHandler):
         self.log(f"Built automatic prefix: {final_prefix} (user: '{user_prefix}', subprefix: '{subprefix}')", "INFO")
         return final_prefix
         
-    def _worker_loop(self):
+    def _worker_loop(self, ):
         """Background worker to decouple filesystem event latency from processing."""
         while True:
             path = self._work_queue.get()
@@ -517,6 +517,7 @@ class ImageHandler(FileSystemEventHandler):
             # Find the highest number for the effective prefix
             prefix_numbers = []
             for prefix, number in matches:
+                self.log(f"Checking existing image: '{prefix}' #' {number}'", "DEBUG")
                 if prefix == effective_prefix:
                     prefix_numbers.append(int(number))
             
@@ -604,10 +605,29 @@ class ImageHandler(FileSystemEventHandler):
         if auto_numbering:
             new_number = highest_number + 1
             new_filename = f"{prefix}_{new_number}{target_suffix}"
+            new_path = processed_path.parent / new_filename
+            
+            # Conflict resolution: Ensure file doesn't exist on disk
+            # This handles cases where file exists but isn't linked in the note
+            while new_path.exists() and new_path != processed_path:
+                self.log(f"File {new_filename} already exists, incrementing index...", "DEBUG")
+                new_number += 1
+                new_filename = f"{prefix}_{new_number}{target_suffix}"
+                new_path = processed_path.parent / new_filename
         else:
-            new_filename = f"{prefix}_{int(time.time())}{target_suffix}"
-
-        new_path = processed_path.parent / new_filename
+            # If auto-numbering is off, use timestamp and add conflict resolution
+            timestamp = int(time.time())
+            new_number = 0 # Initialize for conflict resolution loop
+            new_filename = f"{prefix}_{timestamp}{target_suffix}"
+            new_path = processed_path.parent / new_filename
+            
+            # Conflict resolution: Ensure file doesn't exist on disk
+            # This handles cases where file exists but isn't linked in the note
+            while new_path.exists() and new_path != processed_path:
+                self.log(f"File {new_filename} already exists, incrementing timestamp/index...", "DEBUG")
+                new_number += 1 # Use new_number as an increment for timestamp conflicts
+                new_filename = f"{prefix}_{timestamp}_{new_number}{target_suffix}"
+                new_path = processed_path.parent / new_filename
 
         if auto_rename:
             try:
