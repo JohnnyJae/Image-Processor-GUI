@@ -31,6 +31,7 @@ class ImageHandler(FileSystemEventHandler):
         
         # History tracking for Recent Images feature
         self.history = []
+        self.history_callback = None  # Optional callback when history changes
         
         # Setup logging
         self.logger = logging.getLogger(__name__)
@@ -88,8 +89,21 @@ class ImageHandler(FileSystemEventHandler):
     def log(self, message, level="INFO"):
         """Custom log method that sends to GUI"""
         if self.log_callback:
-            self.log_callback(f"[{level}] {message}")
-        self.logger.log(getattr(logging, level), message)
+            # Pass message and level to the callback to utilize GUI styling
+            try:
+                self.log_callback(message, level)
+            except TypeError:
+                # Fallback in case a different callback is used that doesn't accept level
+                self.log_callback(f"[{level}] {message}")
+
+        # Map custom "SUCCESS" level to standard logging.INFO to avoid AttributeError
+        if level == "SUCCESS":
+            log_level = logging.INFO
+        else:
+            # Use getattr with a default to avoid crashes on other unknown levels
+            log_level = getattr(logging, level, logging.INFO)
+
+        self.logger.log(log_level, message)
         
     def create_subprefix_from_filename(self, note_path):
         """Create a subprefix from the note filename by removing non-alphanumeric chars and capitalizing words"""
@@ -636,10 +650,15 @@ class ImageHandler(FileSystemEventHandler):
         self._note_cache_valid = False  # existing invalidation (can remove if relying on content cache)
         self.log(f"Added {image_code} to {note_path.name} (processed in {time.time() - start_time:.2f}s)", "INFO")
         
-        # Add to history
+        # Add to history - use correct final path based on whether rename succeeded
+        if auto_rename and final_filename == new_filename:
+            final_path = new_path
+        else:
+            final_path = processed_path
+            
         self.history.insert(0, {
             'original_path': original_path,
-            'current_path': new_path,
+            'current_path': final_path,
             'image_code': image_code,
             'note_path': note_path,
             'timestamp': time.time()
@@ -647,6 +666,13 @@ class ImageHandler(FileSystemEventHandler):
         # Keep history limited to e.g. 50 items
         if len(self.history) > 50:
             self.history.pop()
+        
+        # Notify GUI if callback is set
+        if self.history_callback:
+            try:
+                self.history_callback()
+            except Exception as e:
+                self.log(f"History callback error: {e}", "WARNING")
 
     def _clean_commands_from_content(self, content):
         """Remove processed commands from content (internal helper)"""
@@ -684,3 +710,83 @@ class ImageHandler(FileSystemEventHandler):
                     
         except Exception as e:
             self.log(f"Error cleaning commands from note: {str(e)}", "ERROR")
+    
+    def rename_recent_item(self, index, new_stem):
+        """
+        Rename a recently processed image from the history.
+        Updates the file, the note's image code, and the history entry.
+        
+        Args:
+            index: Index into self.history
+            new_stem: New filename without extension
+            
+        Returns:
+            (success: bool, message: str)
+        """
+        try:
+            # Validate index
+            if index < 0 or index >= len(self.history):
+                return False, f"Invalid history index: {index}"
+            
+            item = self.history[index]
+            current_path = item['current_path']
+            old_image_code = item['image_code']
+            note_path = item.get('note_path')
+            
+            # Check if file exists
+            if not current_path.exists():
+                return False, f"File not found: {current_path.name}"
+            
+            # Build new path
+            extension = current_path.suffix
+            new_filename = f"{new_stem}{extension}"
+            new_path = current_path.parent / new_filename
+            
+            # Check if target already exists
+            if new_path.exists() and new_path != current_path:
+                return False, f"File already exists: {new_filename}"
+            
+            # Rename the file
+            if new_path != current_path:
+                current_path.rename(new_path)
+                self.log(f"Renamed {current_path.name} -> {new_filename}", "INFO")
+            
+            # Update image code in note if applicable
+            if note_path and note_path.exists():
+                try:
+                    with open(note_path, 'r', encoding='utf-8') as f:
+                        note_content = f.read()
+                    
+                    # Build new image code (preserve format structure)
+                    old_filename = current_path.name
+                    new_image_code = old_image_code.replace(old_filename, new_filename)
+                    
+                    if old_image_code in note_content:
+                        updated_content = note_content.replace(old_image_code, new_image_code)
+                        with open(note_path, 'w', encoding='utf-8') as f:
+                            f.write(updated_content)
+                        self.log(f"Updated image code in {note_path.name}: {old_image_code} -> {new_image_code}", "INFO")
+                        
+                        # Update history entry
+                        item['current_path'] = new_path
+                        item['image_code'] = new_image_code
+                    else:
+                        # Image code not found (maybe note was edited), just update file reference
+                        item['current_path'] = new_path
+                        self.log(f"Warning: Image code not found in note, only file renamed", "WARNING")
+                except Exception as e:
+                    # File rename succeeded but note update failed
+                    item['current_path'] = new_path
+                    self.log(f"Warning: Could not update note: {e}", "WARNING")
+            else:
+                # No note associated
+                item['current_path'] = new_path
+                item['image_code'] = old_image_code.replace(current_path.name, new_filename)
+            
+            return True, f"Renamed to {new_filename}"
+            
+        except PermissionError:
+            return False, f"Permission denied: file may be in use"
+        except Exception as e:
+            self.log(f"Error renaming: {e}", "ERROR")
+            return False, f"Error: {str(e)}"

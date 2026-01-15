@@ -243,7 +243,7 @@ class ImageProcessorGUI:
         # Recent Images Tab (New)
         recent_tab = tk.Frame(notebook, bg=self.theme.colors['bg_primary'])
         notebook.add(recent_tab, text="🕒 Recent Images")
-        RecentImagesTab(recent_tab, self, self.theme)
+        self.recent_images_tab = RecentImagesTab(recent_tab, self, self.theme)
         
         # Control Panel at bottom
         self.setup_control_panel(main_container)
@@ -396,6 +396,13 @@ class ImageProcessorGUI:
             self.handler = ImageHandler(vault_path, self.settings['default_prefix'].get(), 
                                        options, log_callback=self.log_message,
                                        clipboard_callback=self.copy_to_clipboard)
+            
+            # Connect history callback to auto-refresh the Recent Images tab
+            def on_history_updated():
+                # Schedule refresh on the main thread to be thread-safe
+                self.root.after(0, self._refresh_recent_images_tab)
+            self.handler.history_callback = on_history_updated
+            
             self.observer = Observer()
             self.observer.schedule(self.handler, images_folder, recursive=False)
             
@@ -440,6 +447,14 @@ class ImageProcessorGUI:
         )
         self.status_badge.pack()
         self.log_message("⏹️ Stopped monitoring")
+    
+    def _refresh_recent_images_tab(self):
+        """Thread-safe refresh of the Recent Images tab"""
+        if hasattr(self, 'recent_images_tab') and self.recent_images_tab:
+            try:
+                self.recent_images_tab.refresh_list()
+            except Exception as e:
+                self.log_message(f"Could not refresh recent images: {e}", "WARNING")
         
     def log_message(self, message, level="INFO"):
         """Add a message to the log output with modern formatting"""
